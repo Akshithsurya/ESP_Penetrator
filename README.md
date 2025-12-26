@@ -5,4 +5,4 @@ using arduino ide
 this has alot of tools use wisely
 
 
-first connect to the wifi <br> open any browser and go to the ip of 192.16.4.1 <br> scan for wifi <br> scan for hosts <br>launch attacks 
+first connect to the wifi <br> open any browser and go to the ip of 192.168.4.1 <br> scan for wifi <br> scan for hosts <br>launch attacks 

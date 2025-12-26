@@ -1,142 +1,198 @@
-# ESP_Penetrator
-for hackingusing ESP_8266 nodemcu 1.0 & esp32 
-using arduino ide 
-# educational purposes only please don't use on other's wifi
-#manual :
+# ESP32 / ESP8266 Security Suite Manual
 
+## ⚠️ Legal Disclaimer
 
-ESP32 / ESP8266 WiFi Security Suite (TTAN_PenTest)
-VersionPlatform
+**WARNING: This software is a security testing tool intended for educational purposes and authorized testing only.**
 
-A comprehensive penetration testing toolkit for ESP32 and ESP8266 microcontrollers. It includes capabilities for WiFi scanning, Deauthentication attacks, Beacon/Probe flooding, Evil Portal (Captive Portal), WPA2 Handshake/PMKID capturing, and packet monitoring (Sniffer).
+- Use strictly on networks you own or have explicit permission to audit.
+- Misuse to disrupt networks you do not own is illegal.
+- The authors assume no liability for misuse of this code.
 
-⚠️ LEGAL DISCLAIMER & WARNING
-IMPORTANT: This tool is intended for authorized educational purposes and security testing only.
+---
 
-Use only on networks you own.
-Do not use this tool to disrupt networks you do not have explicit permission to test.
-Unauthorized access to computer networks is illegal.
-The developers are not responsible for any misuse of this software.
-By compiling and using this code, you agree to these terms.
+## 📖 Introduction
 
-Features
-Reconnaissance
-WiFi Scan: Scans for nearby Access Points, displaying SSID, Signal (dBm), Channel, BSSID, and Encryption type.
-Host Scan: Displays connected clients to the ESP's Access Point.
-Attacks
-Deauth Attack: Disconnects clients from a target AP using forged 802.11 Deauthentication frames.
-Disassociation Attack: Disconnects clients using forged Disassociation frames.
-Association Flood: Floods a target AP with fake association requests to exhaust its resources.
-Authentication Flood: Floods a target AP with fake authentication frames.
-Beacon Flood: Creates hundreds of fake Access Points (SSID spam) to confuse scanners.
-Probe Flood: Floods the air with Probe Request frames.
-Karma (Mana) Attack: Responds to all Probe Requests, mimicking known SSIDs to force clients to connect to the device.
-Capturing & Monitoring
-Handshake Capture: Monitors traffic to capture WPA/WPA2 4-way handshakes for offline cracking.
-PMKID Capture: Captures the Robust Secure Network Key (RSN) information.
-Packet Sniffer: Raw 802.11 packet capture and analysis.
-Channel Monitor: Displays real-time packet statistics (Management, Control, Data frames).
-Channel Hopper: Automatically hops through channels 1-13 to gather data across the spectrum.
-Social Engineering
-Evil Portal (Captive Portal): Creates a fake AP that forces users to a login page ("Public WiFi Registration") to harvest credentials.
-Admin Panel: Separate web interface (Port 8080) to view captured credentials.
-Hardware Requirements
-For ESP32 Code (ESP32_kill.ino)
-Microcontroller: ESP32 (e.g., ESP32-WROOM-32, DOIT DevKit v1, NodeMCU-32S).
-Flash: Minimum 4MB.
-RAM: Built-in RAM is sufficient.
-For ESP8266 Code (ESP8266_kill.ino)
-Microcontroller: ESP8266 (e.g., NodeMCU v1.0, Wemos D1 Mini).
-Flash: Minimum 4MB recommended.
-RAM: Note: ESP8266 has less RAM than ESP32. Large scans or high packet rates may cause instability.
-Limitations:
-Host Scan (Hosts) does not return client MAC addresses on ESP8266 due to Arduino SDK limitations (it relies on SoftAP station count only).
-Software Requirements
-Arduino IDE: Version 1.8.x or 2.x.x.
-Core Libraries:
-For ESP32: Install esp32 by Espressif Systems (via Board Manager).
-For ESP8266: Install esp8266 by Espressif Systems (via Board Manager).
-Included Dependencies (Standard Arduino Libraries):
-WiFi.h (or ESP8266WiFi.h)
-WebServer.h (or ESP8266WebServer.h)
-DNSServer.h
-Special Dependencies (for raw packet injection):
-ESP32: esp_wifi.h (Included in ESP32 Core).
-ESP8266: user_interface.h (Included in ESP8266 Non-OS SDK functions).
-Installation & Compilation
-Clone or Download the repository.
-Open the .ino file in Arduino IDE (ESP32_kill.ino or ESP8266_kill.ino).
-Select Board:
-Go to Tools > Board > esp32 (or esp8266).
-Select your specific board model (e.g., NodeMCU-32S or NodeMCU 1.0 (ESP-12E Module)).
-Select Upload Speed: 921600 (usually works best).
-Click Upload.
-First Boot & Connection
-Power on your device.
-Connect your computer or smartphone to the WiFi Access Point named: TTAN_PenTest
-Password: pentester123
-Once connected, open your web browser and navigate to:
-http://192.168.4.1 (Main Interface)
-http://192.168.4.1:8080 (Admin/Captive Panel)
-The IP is also printed to the Serial Monitor (115200 baud).
-Usage Guide
-1. WiFi Scan & Target Selection
-Click "WiFi Scan" in the Reconnaissance section.
-Note on Connectivity: The ESP32/8266 must briefly disconnect from AP mode to perform a Station scan. The code handles this by showing a "Scanning..." page and automatically reloading when complete.
-Results will appear in the "SCAN RESULTS" box.
-Each network has action buttons (DEAUTH, DISASSOC, ASSOC, AUTH) pre-filled with the target MAC, Channel, and SSID.
-2. Running Attacks
-Select the Target Channel using the dropdown menu in the "Attacks & Tools" section.
-Deauth/Disassoc: Use the buttons from the scan results (or manually call the API) to start kicking clients.
-Beacon/Probe Floods: Click the "Beacon/Probe Flood" buttons. You may be prompted to enter an SSID. The ESP will begin spamming frames immediately.
-Monitor/Sniffer: Click to start listening to the air. Use "Channel Hopper" to cycle through all channels.
-3. Handshake / PMKID Capture
-Select the channel your target is on.
-Click "Handshake Capture".
-The device will enter promiscuous mode.
-Trigger a client to reconnect (e.g., run a Deauth attack).
-If successful, the captured handshake frames are logged.
-Click "View Handshakes" to see the raw capture logs.
-4. Evil Portal (Credential Harvesting)
-Click "Evil Portal".
-Enter a fake SSID (e.g., Starbucks_WiFi, Airport_Free).
-The ESP will reboot its AP with the new name.
-DNS Server starts automatically, redirecting all HTTP traffic to the login page.
-Victims see a "Public WiFi Registration" form.
-View captured credentials at http://192.168.4.1:8080/admin.
-Troubleshooting
-"WiFi Scan" not available / Connection timeout
-Cause: The device disconnects from the AP to scan, breaking the browser connection.
-Fix: The code now includes an interstitial "Scanning..." page that handles the reload automatically. Ensure you do not manually switch WiFi networks on your device while scanning.
-Attacks not working (Deauth fails)
-Ensure you are on the correct Channel.
-Ensure the Target BSSID is correct.
-Check Signal Strength: If the ESP is too far from the target, the target won't "hear" the packets.
-ESP8266 Specifics: Use wifi_set_power(82) in setup for max range.
-Web Interface is slow
-ESP8266: Handling raw frames + Web Server can tax the CPU. If the interface lags, stop the packet injection attacks.
-Serial Monitor shows "Guru Meditation Error" (ESP8266)
-This is a Watchdog Timer Reset (WDT).
-Fix: Ensure ESP.wdtFeed() is called frequently in the loop() (included in the code). If it still crashes, you might be flooding too fast for the CPU to handle the web server.
-File Structure & API
-Main Server (Port 80)
-/ : Dashboard.
-/s : Initiate WiFi Scan.
-/h : Initiate Host Scan.
-/m?c=1&hop=1 : Start Monitor/Hopper.
-/d?m=... : Start Deauth.
-/handshake : View captured handshakes.
-Admin Server (Port 8080)
-/admin : View captured credentials (Name/Mobile).
-/admin/json : Export credentials as JSON.
-Notes on Porting (ESP32 vs ESP8266)
-Feature	ESP32 Implementation	ESP8266 Implementation
-Low-level Access	esp_wifi.h (Official ESP-IDF)	user_interface.h (SDK)
-Packet Injection	esp_wifi_80211_tx	wifi_send_pkt_freedom
-Sniffer Callback	wifi_promiscuous_pkt_t*	uint8_t* buf, uint16_t len
-Stability	High (Dual Core)	Medium (Single Core, share memory)
-Credits & Version
-Version: 2.4
-Author: TTAN
-Contributors: Open Source Community
-License: Educational Use Only.
+This firmware provides a comprehensive suite of WiFi penetration testing tools for the ESP32 and ESP8266 platforms. It includes features for reconnaissance, active attacks, credential harvesting (Evil Portal), and packet monitoring (Sniffer).
+
+---
+
+## 🔧 Hardware Requirements
+
+### For ESP32 Version
+- **Board:** ESP32 DevKit, NodeMCU-32S, WROOM-32, or similar.
+- **RAM:** Standard built-in RAM is sufficient.
+- **Features:** Dual-core processing provides stable packet injection and sniffer operations simultaneously.
+
+### For ESP8266 Version
+- **Board:** NodeMCU 1.0 (ESP-12E), Wemos D1 Mini, or similar.
+- **RAM:** Limited resources available. High packet rates may cause watchdog resets.
+- **Dependencies:** Requires `user_interface.h` for raw packet injection and promiscuous mode.
+- **Limitations:**
+  - "Host Scan" relies on SoftAP station count. It cannot display specific Client MAC addresses due to SDK limitations on this platform.
+
+---
+
+## 💻 Software Requirements
+
+- **Arduino IDE:** Version 1.8.x or newer.
+- **Board Manager:**
+  - For ESP32: Install `esp32` by Espressif Systems.
+  - For ESP8266: Install `esp8266` by Espressif Systems.
+- **Libraries:** Standard libraries included with the core installation (No external download required):
+  - `WiFi.h` / `ESP8266WiFi.h`
+  - `WebServer.h` / `ESP8266WebServer.h`
+  - `DNSServer.h`
+
+---
+
+## 📥 Installation
+
+1. Download the appropriate `.ino` file (`ESP32_kill.ino` or `ESP8266_kill.ino`).
+2. Open the file in the Arduino IDE.
+3. Select your Board: **Tools > Board > Generic ESP8266 Module** or **ESP32 Dev Module**.
+4. Select the correct Upload Speed: **115200**.
+5. Click the **Upload** button.
+
+---
+
+## 🚀 First Boot & Access
+
+1. Connect the microcontroller to power.
+2. Use a WiFi-enabled device (Laptop, Phone) to search for wireless networks.
+3. Connect to the Access Point named: **TTAN_PenTest**
+4. Enter the password: **pentester123**
+5. Open a web browser and navigate to: **http://192.168.4.1**
+6. The Main Dashboard will load.
+
+**Note:** The Admin Panel (for viewing captured credentials) is available at **http://192.168.4.1:8080**
+
+---
+
+## 🖥️ Web Interface Guide
+
+The dashboard is divided into three main sections: **System Status**, **Reconnaissance**, and **Attacks & Tools**.
+
+### 1. Reconnaissance
+
+This section allows you to gather information about the local WiFi environment.
+
+#### WiFi Scan:
+- Initiates a scan for nearby Access Points.
+- **Important:** The ESP must briefly disconnect from its own AP to scan. The screen will display a "Scanning..." message and automatically reload when finished. Do not change your device's WiFi connection during this time.
+- **Results:** Displays SSID, Signal Strength, Channel, BSSID, and Encryption type.
+
+#### Host Scan:
+- Displays the number of clients currently connected to the ESP's Access Point.
+- **Note:** On ESP8266, specific MAC addresses of clients are not displayed.
+
+---
+
+### 2. Attacks & Tools
+
+This section contains controls for executing various attacks. Use the Channel dropdown to select the target frequency (1-13).
+
+#### Monitor Mode:
+- **Channel Analysis:** Locks the device to a specific channel and displays packet statistics (Management, Control, Data).
+- **Channel Hopper:** Cycles through channels 1-13 automatically to capture traffic across the spectrum.
+
+#### Deauth (Scan Required):
+- Found in the "Scan Results" table next to a target network.
+- Clicking this sends forged 802.11 Deauthentication frames.
+- **Effect:** Forces connected clients to disconnect from the target AP.
+
+#### Beacon Flood:
+- Sends continuous fake Beacon frames.
+- **Effect:** Creates hundreds of fake Access Points with the chosen SSID, confusing scanners and users.
+
+#### Probe Flood:
+- Sends continuous fake Probe Request frames.
+- **Effect:** Spamming the airwaves to detect target networks or create noise.
+
+#### PMKID Capture:
+- Listens for Robust Security Network (RSN) information frames.
+- Useful for capturing hashes without a client handshake.
+
+#### Handshake Capture:
+- Puts the device in promiscuous mode to record WPA/WPA2 4-way handshakes.
+- **Usage:** Start capture, then run a Deauth attack against a client to force them to reconnect.
+- **View:** Click "View Handshakes" to see the captured packet logs.
+
+#### Evil Portal (Captive Portal):
+- Prompts for a Fake SSID (e.g., Starbucks_WiFi).
+- The ESP reboots its AP with this new name.
+- The DNS server is activated to redirect all traffic to a fake login page.
+- **Harvesting:** Users enter credentials thinking they are logging in to the real network.
+- **View Data:** Go to Port 8080 (`/admin`) to see captured usernames and passwords.
+
+#### Karma Attack:
+- Responds to all Probe Requests from nearby devices.
+- **Effect:** Tricks devices into thinking the ESP is their known home network, forcing a connection.
+
+---
+
+## 🛠️ Troubleshooting
+
+### Scan Button Fails / Page Unavailable
+- **Cause:** The device switches modes to scan, dropping the client connection.
+- **Solution:** The code has been updated to show an interstitial "Scanning..." page. Wait 10-15 seconds for the device to restore its AP and the page to reload automatically.
+
+### ESP8266 Stability / Guru Meditation Error
+- **Cause:** The ESP8266 has less processing power and RAM than the ESP32. Handling web traffic while injecting packets can trigger the Watchdog Timer (WDT).
+- **Solution:**
+  - Increase the `WATCHDOG_TIMEOUT` in Config (if defined).
+  - If the device crashes, reduce the number of active attacks.
+  - Ensure you are not running the Serial Monitor at too slow a baud rate while attacks are active.
+
+### Attacks Not Working
+- **Channel Mismatch:** Ensure the "Channel" dropdown matches the target AP's channel.
+- **Signal Strength:** If the ESP is too far away, it will not hear packets from the target, nor will the target hear the ESP's Deauth packets.
+- **Protection:** Some modern routers have frame flooding protection, which may block Deauth or Beacon floods.
+
+### Admin Panel / Captured Credentials
+If you are running the Evil Portal, open a separate tab to **http://192.168.4.1:8080/admin** to view captured data in real-time without disrupting the victim's view of the portal.
+
+---
+
+## 🔌 API Endpoints Reference
+
+### Main Server (Port 80)
+- `GET /`: Main Dashboard
+- `GET /s`: Start WiFi Scan
+- `GET /h`: Start Host Scan
+- `GET /d?m=...`: Start Deauth (Arguments: `m=MAC`, `s=SSID`, `c=Channel`)
+- `GET /stop`: Stop all active attacks
+- `GET /r`: Reboot the device
+
+### Admin Server (Port 8080)
+- `GET /admin`: View captured credentials table
+- `GET /admin/json`: Download credentials as JSON
+- `GET /admin/clear`: Wipe all captured data
+
+---
+
+## 🔄 Porting Notes (ESP32 vs ESP8266)
+
+| Feature | ESP32 Implementation | ESP8266 Implementation |
+|---------|---------------------|------------------------|
+| Low-Level Access | `esp_wifi.h` (Official IDF) | `user_interface.h` (RTOS SDK) |
+| Packet Injection | `esp_wifi_80211_tx` | `wifi_send_pkt_freedom` |
+| Sniffer Callback | Struct with metadata (RSSI, Rate) | Raw buffer (buf, len) only |
+| Performance | High stability (Dual Core) | Moderate (Single Core) |
+
+---
+
+## 👤 Credits
+
+- **Version:** 2.4
+- **Author:** TTAN
+- **License:** Educational Use Only
+
+---
+
+## ⭐ Support
+
+If you find this project useful, please consider giving it a star on GitHub!
+
+---
+
+**Remember:** Always use responsibly and ethically. Only test on networks you own or have explicit written permission to test.

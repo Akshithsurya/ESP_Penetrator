@@ -1,5 +1,6 @@
 # ESP32 / ESP8266 Security Suite Manual
-
+# ![ESP32](https://img.shields.io/badge/ESP32-E7352C?style=for-the-badge&logo=espressif&logoColor=white)
+ ![Arduino](https://img.shields.io/badge/Arduino_IDE-00979D?style=for-the-badge&logo=arduino&logoColor=white)
 ## ⚠️ Legal Disclaimer
 
 **WARNING: This software is a security testing tool intended for educational purposes and authorized testing only.**

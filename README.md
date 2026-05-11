@@ -185,7 +185,7 @@ If you are running the Evil Portal, open a separate tab to **http://192.168.4.1:
 ## 👤 Credits
 
 - **Version:** 2.4
-- **Author:** TTAN
+- **Author:** Ak_45
 - **License:** Educational Use Only
 
 ---

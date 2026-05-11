@@ -8,7 +8,7 @@ extern "C" {
 
 namespace Config {
   const int LED_PIN              = 2;
-  const char* AP_SSID            = "pentester";
+  const char* AP_SSID            = "Ak_45's_wi-fi_penetester";
   const char* AP_PASSWORD        = "pentester123";
   const int MAX_CREDENTIALS      = 50;
   const int MAX_SCAN_RESULTS     = 30;
